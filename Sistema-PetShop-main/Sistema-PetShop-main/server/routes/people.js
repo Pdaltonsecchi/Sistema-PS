@@ -1,10 +1,10 @@
 'use strict';
 
 /* ============================================================
-   Clientes, mascotas y agenda de peluquería
+   Clientes, mascotas y agenda de turnos
    ============================================================ */
 module.exports = function (H) {
-  const { add, db, U, L, HttpError, audit, isAdmin, fullName, getSettings, mapClient, mapPet, listClients, mustExist } = H;
+  const { add, db, U, L, HttpError, audit, isAdmin, fullName, getSettings, mapClient, mapPet, listClients, autoReady, mustExist } = H;
 
   function clientInput(b) {
     const ph = U.optPhone(b.phone);
@@ -25,7 +25,7 @@ module.exports = function (H) {
       breed: U.optStr(b.breed, 100, 'Raza'),
       size: U.optOneOf(b.size, U.PET_SIZES, 'Tamaño'),
       birth: U.optPastDate(b.birth, 'Fecha de nacimiento'),
-      notes: U.optStr(b.notes, 1000, 'Notas de peluquería'),
+      notes: U.optStr(b.notes, 1000, 'Notas'),
     };
   }
   add('GET', '/api/clients', async () => ({ items: await listClients() }));
@@ -36,6 +36,7 @@ module.exports = function (H) {
     const id = U.idParam(ctx.params.id);
     const r = await db.query('SELECT * FROM clients WHERE id = $1', [id]);
     if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese cliente. Recargá la página.');
+    await autoReady(db);
     const [pets, sales, appts] = await Promise.all([
       db.query('SELECT * FROM pets WHERE client_id = $1 ORDER BY lower(name), id', [id]),
       db.query(
@@ -116,7 +117,7 @@ module.exports = function (H) {
     if (!r.rows[0]) throw new HttpError(404, 'No encontramos esa mascota. Recargá la página.');
   });
 
-  /* ---------- Agenda de peluquería y baño (la usan el dueño y los empleados) ---------- */
+  /* ---------- Agenda de turnos (la usan el dueño y los empleados) ---------- */
   const APPT_COLS =
     'a.id, a.pet_id, a.service_id, a.on_date, a.at_time, a.duration_min, a.status, a.notes, a.sale_id, a.staff, a.started_at, a.finished_at, ' +
     'pt.name AS pet_name, pt.species, pt.breed, pt.size, pt.notes AS pet_notes, pt.client_id, cl.first_name, cl.last_name, cl.phone, sv.name AS service_name, sv.price AS service_price';
@@ -148,10 +149,10 @@ module.exports = function (H) {
   }
   const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   /**
-   * Controles de un turno, en orden: fecha pasada, superposición (misma mascota o mismo peluquero) y horario
-   * comercial. Cada aviso se puede confirmar (salvo reservar en el pasado y, para el empleado, la superposición).
+   * Controles de un turno, en orden: fecha pasada, superposición (misma mascota o mismo personal asignado) y horario
+   * comercial. Los avisos de fecha pasada y horario se pueden confirmar; la superposición con el mismo personal no.
    */
-  async function checkAppt(c, a, selfId, b, admin) {
+  async function checkAppt(c, a, selfId, b) {
     const today = U.todayAR();
     if (a.date < today) {
       if (!selfId && a.status === 'reservado') {
@@ -163,12 +164,12 @@ module.exports = function (H) {
       await c.query('SELECT a.id, a.pet_id, a.on_date, a.at_time, a.duration_min, a.status, a.staff, pt.name AS pet FROM appointments a JOIN pets pt ON pt.id = a.pet_id WHERE a.on_date = $1', [a.date])
     ).rows.map((o) => ({ id: o.id, petId: o.pet_id, date: o.on_date, time: String(o.at_time).slice(0, 5), duration: o.duration_min, status: o.status, staff: o.staff, pet: o.pet }));
     const hits = L.findConflicts({ id: selfId || 0, petId: a.petId, date: a.date, time: a.time, duration: a.duration, status: a.status, staff: a.staff }, others);
-    if (hits.length && !(b.confirmOverlap === true && admin)) {
+    if (hits.length) {
       const h = hits[0];
       const end = hhmm(Number(h.time.slice(0, 2)) * 60 + Number(h.time.slice(3, 5)) + h.duration);
-      const who = h.petId === a.petId ? h.pet + ' ya tiene un turno' : (h.staff || 'Ese peluquero') + ' ya atiende a ' + h.pet;
-      throw new HttpError(409, who + ' de ' + h.time + ' a ' + end + '.' + (admin ? ' ¿Reservás igual?' : ' Elegí otro horario o pedile al dueño que lo confirme.'), {
-        code: admin ? 'overlap' : 'overlap_forbidden',
+      const who = h.petId === a.petId ? h.pet + ' ya tiene un turno' : (h.staff || 'Ese personal') + ' ya atiende a ' + h.pet;
+      throw new HttpError(409, who + ' de ' + h.time + ' a ' + end + '. Elegí otro horario o asigná a otra persona.', {
+        code: 'overlap_forbidden',
         details: hits.map((x) => ({ id: x.id, pet: x.pet, time: x.time, duration: x.duration, staff: x.staff })),
       });
     }
@@ -189,10 +190,11 @@ module.exports = function (H) {
     const from = U.reqDate(ctx.query.get('from') || '', 'Desde');
     const to = U.reqDate(ctx.query.get('to') || '', 'Hasta');
     if (to < from) throw U.bad('«Hasta» no puede ser anterior a «Desde».');
+    await autoReady(db);
     const r = await db.query('SELECT ' + APPT_COLS + APPT_FROM + ' WHERE a.on_date BETWEEN $1 AND $2 ORDER BY a.on_date, a.at_time, a.id', [from, to]);
     return { items: r.rows.map(mapAppt) };
   });
-  // Peluqueros cargados alguna vez (para sugerirlos en el formulario).
+  // Personal asignado alguna vez (para sugerirlos en el formulario).
   add('GET', '/api/appointments/staff', async () => {
     const r = await db.query("SELECT DISTINCT staff FROM appointments WHERE staff <> '' ORDER BY staff");
     return { items: r.rows.map((x) => x.staff) };
@@ -202,7 +204,7 @@ module.exports = function (H) {
     await mustExist(db, 'pets', a.petId, 'No encontramos esa mascota. Recargá la página.');
     if (a.serviceId) await mustExist(db, 'services', a.serviceId, 'No encontramos ese servicio. Recargá la página.');
     return db.tx(async (c) => {
-      await checkAppt(c, a, null, ctx.body, isAdmin(ctx));
+      await checkAppt(c, a, null, ctx.body);
       const r = await c.query(
         'INSERT INTO appointments (pet_id, service_id, on_date, at_time, duration_min, status, notes, staff) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
         [a.petId, a.serviceId, a.date, a.time, a.duration, a.status, a.notes, a.staff]
@@ -217,7 +219,7 @@ module.exports = function (H) {
     await mustExist(db, 'pets', a.petId, 'No encontramos esa mascota. Recargá la página.');
     if (a.serviceId) await mustExist(db, 'services', a.serviceId, 'No encontramos ese servicio. Recargá la página.');
     return db.tx(async (c) => {
-      await checkAppt(c, a, id, ctx.body, isAdmin(ctx));
+      await checkAppt(c, a, id, ctx.body);
       const r = await c.query(
         'UPDATE appointments SET pet_id = $1, service_id = $2, on_date = $3, at_time = $4, duration_min = $5, status = $6, notes = $7, staff = $8' + stamps(a.status) + ' WHERE id = $9 RETURNING id',
         [a.petId, a.serviceId, a.date, a.time, a.duration, a.status, a.notes, a.staff, id]
@@ -225,7 +227,7 @@ module.exports = function (H) {
       if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese turno. Recargá la agenda.');
     });
   });
-  // Cambio rápido de estado (en curso, listo para retirar, no vino...).
+  // Cambio rápido de estado (confirmado, listo para retirar, no vino...).
   add('POST', '/api/appointments/:id/status', async (ctx) => {
     const status = U.oneOf(ctx.body.status, U.APPT_STATUS, 'Estado');
     const r = await db.query('UPDATE appointments SET status = $1' + stamps(status) + ' WHERE id = $2 RETURNING id', [status, U.idParam(ctx.params.id)]);

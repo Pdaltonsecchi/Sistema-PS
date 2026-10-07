@@ -254,6 +254,17 @@ async function cashSummary() {
   return { today, month: m, drawer, todayCash: { in: U.round2(t.in), out: U.round2(t.out) } };
 }
 
+/**
+ * Un turno confirmado pasa solo a «Listo para retirar» cuando termina su horario (hora de inicio + duración),
+ * medido en hora de Argentina.
+ */
+async function autoReady(q) {
+  await q.query(
+    "UPDATE appointments SET status = 'listo', started_at = COALESCE(started_at, now()), finished_at = COALESCE(finished_at, now()) " +
+      "WHERE status = 'confirmado' AND (on_date + at_time + duration_min * interval '1 minute') <= (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')"
+  );
+}
+
 async function mustExist(q, table, id, message) {
   const r = await q.query('SELECT id FROM ' + table + ' WHERE id = $1', [id]);
   if (!r.rows[0]) throw new HttpError(404, message);
@@ -536,7 +547,7 @@ const report = require('./report');
 const H = {
   add, db, U, L, HttpError, backup, report, isAdmin, fullName, fmtQty, audit, getSettings,
   mapProduct, mapService, mapSupplier, mapClient, mapPet, mapCash, listClients,
-  drawerAt, cashSummary, mustExist, checkCodes, saveCodes, optSupplier, deductStock, revertStockMovements,
+  drawerAt, cashSummary, autoReady, mustExist, checkCodes, saveCodes, optSupplier, deductStock, revertStockMovements,
 };
 require('./routes/catalog')(H);
 require('./routes/sales')(H);

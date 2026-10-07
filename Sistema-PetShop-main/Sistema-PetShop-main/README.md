@@ -13,8 +13,8 @@ Sistema pensado para **el dueño del pet shop**: el stock de lo que vendés, las
 | **Ventas** | Historial con número correlativo, búsqueda, ganancia, ticket para reimprimir y **anular venta** con motivo obligatorio (devuelve el stock y saca el ingreso de la caja) | Todos (el empleado solo ve las de hoy, sin ganancias) |
 | **Stock** | Catálogo con categorías, marca, varios códigos de barras, venta por unidad o **suelto por kilo**, costo, margen, vencimiento, regalo/promoción, botón **Vender**, "llegó mercadería", **ingreso con escáner**, ajustes, historial, **abrir bolsa**, **actualizar precios por %** y **Para pedir** (pedido por proveedor para copiar o mandar por WhatsApp) | Todos (costos y cambios: solo el dueño) |
 | **Servicios** | Precios de baño y peluquería (con duración) | Todos (editar: dueño) |
-| **Agenda** | Turnos por mascota y **peluquero**, vista Día en grilla horaria, Semana y Mes. Avisa superposiciones, fuera de horario y fechas pasadas. Estados y botón **Cobrar** | Todos |
-| **Clientes** | Contacto, mascotas (especie, raza, tamaño, notas de peluquería), compras, turnos y WhatsApp | Todos (borrar: dueño) |
+| **Agenda** | Turnos por mascota y **personal asignado**, vista Día en grilla horaria, Semana y Mes. Avisa superposiciones, fuera de horario y fechas pasadas. Estados y botón **Cobrar** | Todos |
+| **Clientes** | Contacto, mascotas (especie, raza, tamaño chico/mediano/grande, notas), compras, turnos y WhatsApp | Todos (borrar: dueño) |
 | **Proveedores** | Contacto, productos que te vende y lo que le pagaste | Todos (editar: dueño) |
 | **Caja** | Ingresos y egresos con forma de pago, efectivo que debería haber, **cierre de caja diario** y exportación a Excel (CSV) | Dueño |
 | **Copias de seguridad** | Copia automática diaria, descarga comprimida a tu computadora y espacio usado de la base | Dueño |

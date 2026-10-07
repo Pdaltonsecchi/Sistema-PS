@@ -49,6 +49,7 @@ module.exports = function (H) {
     const series = daily
       ? await db.query('SELECT on_date AS k, SUM(total) AS total, SUM(total - cost_total) AS profit, COUNT(*) AS n FROM sales WHERE voided_at IS NULL AND on_date BETWEEN $1 AND $2 GROUP BY on_date', [R.from, R.to])
       : await db.query("SELECT to_char(on_date, 'YYYY-MM') AS k, SUM(total) AS total, SUM(total - cost_total) AS profit, COUNT(*) AS n FROM sales WHERE voided_at IS NULL AND on_date BETWEEN $1 AND $2 GROUP BY 1", [R.from, R.to]);
+    await H.autoReady(db);
     const [cur, prev, top, cats, pays, appts, closing, movesToday] = await Promise.all([
       totals(R.from, R.to),
       totals(R.prevFrom, R.prevTo),
@@ -63,7 +64,7 @@ module.exports = function (H) {
         [R.from, R.to]
       ),
       db.query('SELECT p.method, SUM(p.amount) AS total FROM sale_payments p JOIN sales s ON s.id = p.sale_id WHERE s.voided_at IS NULL AND s.on_date BETWEEN $1 AND $2 GROUP BY p.method', [R.from, R.to]),
-      db.query("SELECT COUNT(*) FILTER (WHERE status IN ('reservado', 'en_curso', 'listo')) AS pending, COUNT(*) FILTER (WHERE status NOT IN ('cancelado', 'no_vino')) AS total FROM appointments WHERE on_date = $1", [today]),
+      db.query("SELECT COUNT(*) FILTER (WHERE status IN ('reservado', 'confirmado', 'en_curso', 'listo')) AS pending, COUNT(*) FILTER (WHERE status NOT IN ('cancelado', 'no_vino')) AS total FROM appointments WHERE on_date = $1", [today]),
       db.query('SELECT 1 FROM cash_closings WHERE on_date = $1', [today]),
       db.query('SELECT COUNT(*) AS n FROM cash_movements WHERE on_date = $1', [today]),
     ]);
@@ -279,7 +280,7 @@ module.exports = function (H) {
     return { from: R.from, to: R.to, ref, hasYear, rows, lines };
   });
 
-  /* ---------- Rendimiento del peluquero ---------- */
+  /* ---------- Rendimiento del personal ---------- */
   add('GET', '/api/summary/staff', { admin: true }, async (ctx) => {
     const R = range(ctx.query);
     const r = await db.query(

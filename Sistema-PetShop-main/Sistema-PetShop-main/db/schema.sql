@@ -165,13 +165,16 @@ CREATE TABLE IF NOT EXISTS appointments (
   on_date DATE NOT NULL,
   at_time TIME NOT NULL,
   duration_min INTEGER NOT NULL DEFAULT 60 CHECK (duration_min BETWEEN 5 AND 600),
-  status TEXT NOT NULL DEFAULT 'reservado' CHECK (status IN ('reservado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado')),
+  status TEXT NOT NULL DEFAULT 'reservado' CHECK (status IN ('reservado', 'confirmado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado')),
   notes TEXT NOT NULL DEFAULT '',
   sale_id INTEGER REFERENCES sales(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS appt_date_idx ON appointments(on_date);
 CREATE INDEX IF NOT EXISTS appt_pet_idx ON appointments(pet_id);
+-- Bases existentes: el estado «confirmado» se agregó después.
+ALTER TABLE appointments DROP CONSTRAINT IF EXISTS appointments_status_check;
+ALTER TABLE appointments ADD CONSTRAINT appointments_status_check CHECK (status IN ('reservado', 'confirmado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado'));
 
 -- Cierre de caja diario: lo que debería haber en efectivo, lo que se contó y la diferencia.
 CREATE TABLE IF NOT EXISTS cash_closings (
