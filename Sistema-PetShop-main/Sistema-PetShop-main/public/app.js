@@ -41,7 +41,7 @@ var delta=function(p,upIsGood){if(p==null)return '<span class="mut">sin datos pa
 // Mismo criterio que el servidor: un UPC-A (12 dígitos) es el EAN-13 con 0 adelante.
 var normCode=function(c){var t=String(c||'').replace(/\s+/g,'');if(/^\d{12}$/.test(t))return '0'+t;if(/^0\d{13}$/.test(t))return t.slice(1);return t;};
 var gtinValid=function(c){if(!/^\d+$/.test(c)||[8,12,13,14].indexOf(c.length)<0)return true;var d=c.split('').map(Number),k=d.pop(),s=0;d.reverse().forEach(function(x,i){s+=x*(i%2===0?3:1);});return (10-s%10)%10===k;};
-var store={get:function(k){try{return localStorage.getItem(k);}catch(e){return null;}},set:function(k,v){try{localStorage.setItem(k,v);}catch(e){}}};
+var store={get:function(k){try{return localStorage.getItem(k);}catch(e){return null;}},set:function(k,v){try{localStorage.setItem(k,v);}catch(e){}},del:function(k){try{localStorage.removeItem(k);}catch(e){}}};
 
 var PHONE_PAT='[0-9 +\\(\\)\\-]{6,50}';
 var PROD_CATS=['Alimento balanceado','Snacks y premios','Accesorios','Juguetes','Higiene y cuidado','Salud (venta libre)','Camas y transporte','Acuario','Aves y roedores','Otros'];
@@ -69,6 +69,40 @@ var PAGE=100; // filas por página en las listas largas
    ============================================================ */
 var S={shop:'Mi Pet Shop',settings:{},user:null,products:[],services:[],suppliers:[],clients:[],summary:null};
 var newCart=function(){return {items:[],discType:'amount',discValue:'',method:'Efectivo',mixed:false,payments:{},clientId:'',petId:'',apptId:null,key:uid()};};
+/* Borrador de la venta en curso: se guarda en el navegador en cada cambio y se recupera al volver (recarga, corte de conexión).
+   Se borra al cobrar o al vaciar la venta. Lleva el id del usuario para que otro usuario no vea la venta ajena. */
+var DRAFT_KEY='petshop_cart_draft',DRAFT_MAX_MS=12*3600*1000;
+function saveDraft(){
+  var c=ui.cart;
+  if(!S.user)return;
+  if(!c.items.length&&!c.clientId){store.del(DRAFT_KEY);return;}
+  store.set('petshop_cart_draft',JSON.stringify({u:S.user.id,t:Date.now(),cart:{items:c.items.map(function(it){return {type:it.type,id:it.id,qty:it.qty,price:it.price,reason:it.reason||''};}),
+    discType:c.discType,discValue:c.discValue,method:c.method,mixed:c.mixed,payments:c.payments,clientId:c.clientId,petId:c.petId,apptId:c.apptId,key:c.key}}));
+}
+function clearDraft(){store.del(DRAFT_KEY);}
+// Cambia a una venta nueva (y borra el borrador).
+function resetCart(){ui.cart=newCart();clearDraft();}
+/** Devuelve el borrador al carrito, validado contra el catálogo actual (precios de lista y stock de ahora). Devuelve true si recuperó algo. */
+function restoreDraft(){
+  var d;
+  try{d=JSON.parse(store.get(DRAFT_KEY)||'null');}catch(e){d=null;}
+  if(!d||!d.cart||d.u!==S.user.id||Date.now()-d.t>DRAFT_MAX_MS||!Array.isArray(d.cart.items)){if(d)clearDraft();return false;}
+  var c=newCart(),admin=isAdmin();
+  d.cart.items.forEach(function(x){
+    var src=x.type==='product'?prodById(x.id):x.type==='service'?servById(x.id):null;
+    if(!src||!(Number(x.qty)>0))return;
+    var qty=x.type==='product'?Math.min(Number(x.qty),src.stock):Number(x.qty),price=admin&&Number(x.price)>=0?Number(x.price):src.price;
+    if(!(qty>0))return;
+    c.items.push({type:x.type,id:src.id,name:src.name,brand:src.brand||'',unit:x.type==='product'?src.unit:'u',qty:qty,price:price,listPrice:src.price,reason:String(x.reason||'')});
+  });
+  var k=d.cart;
+  if(!c.items.length&&!k.clientId){clearDraft();return false;}
+  c.discType=k.discType==='percent'?'percent':'amount';c.discValue=k.discValue==null?'':String(k.discValue);
+  c.method=PAY().indexOf(k.method)>=0?k.method:PAY()[0];c.mixed=!!k.mixed;c.payments=k.payments&&typeof k.payments==='object'?k.payments:{};
+  c.clientId=clientById(k.clientId)?String(k.clientId):'';c.petId=c.clientId&&k.petId?String(k.petId):'';c.apptId=k.apptId||null;c.key=k.key||c.key;
+  ui.cart=c;ui.draftNote=true;
+  return true;
+}
 var period0=function(){var p=store.get('petshop_period');return ['today','yesterday','7d','month','prevMonth'].indexOf(p)>=0?p:'today';};
 var ui={view:'',cart:newCart(),posq:'',scanStrip:false,
   stq:'',cat:'all',stf:'all',stab:'products',stLimit:PAGE,
@@ -187,6 +221,7 @@ async function start(){
   var d=await api('/bootstrap');
   applyBootstrap(d);
   ui.view=isAdmin()?'resumen':'vender';
+  restoreDraft();
   setState('app');
   render();
   try{await loadView();}catch(e){toast(e.message,true);}
@@ -801,6 +836,24 @@ function posResults(){
   if(!h)h='<li class="empty">'+(S.products.length||S.services.length?'No hay nada con esa búsqueda.':'Todavía no hay productos ni servicios cargados.')+'</li>';
   return h;
 }
+function totalsHTML(t,lossTotal){
+  return '<div class="ctotals"><div><span>Subtotal</span><span>'+money(t.sub)+'</span></div>'+(t.disc?'<div><span>Descuento</span><span>− '+money(t.disc)+'</span></div>':'')+
+    '<div class="grand"><span>Total</span><span>'+money(t.total)+'</span></div>'+(lossTotal?'<div class="negtxt">Ojo: venta con pérdida ('+money(t.total-t.cost)+')</div>':'')+'</div>';
+}
+/** Recalcula Subtotal, Total y el botón Cobrar sin redibujar el carrito (así el campo de descuento no pierde el foco al tipear). */
+function refreshCartTotals(){
+  var box=$('#cartbox');if(!box)return;
+  var c=ui.cart,t=cartTotals(),tot=box.querySelector('.ctotals'),pay=box.querySelector('[data-action="cart-pay"]');
+  var lossTotal=isAdmin()&&t.costKnown&&t.cost>0&&t.total<t.cost;
+  if(tot)tot.outerHTML=totalsHTML(t,lossTotal);
+  if(pay)pay.innerHTML='Cobrar '+money(t.total)+' <kbd>F4</kbd>';
+  var note=box.querySelector('.mixnote');
+  if(c.mixed&&note){
+    var sum=r2(PAY().reduce(function(n,m){return n+(Number(c.payments[m])||0);},0)),diff=r2(t.total-sum);
+    note.className='mixnote '+(diff===0?'in':'out');
+    note.textContent=diff===0?'Los pagos suman el total ✓':diff>0?'Faltan '+money(diff):'Sobran '+money(-diff);
+  }
+}
 function cartHTML(){
   var c=ui.cart,admin=isAdmin(),t=cartTotals(),pays=PAY();
   var lines=c.items.map(function(it,i){
@@ -826,7 +879,7 @@ function cartHTML(){
   if(c.mixed){
     var sum=r2(pays.reduce(function(n,m){return n+(Number(c.payments[m])||0);},0)),diff=r2(t.total-sum);
     payHTML='<div class="mixed">'+pays.map(function(m){return '<label><span>'+m+'</span><input type="number" class="cpay" data-m="'+esc(m)+'" min="0" step="0.01" value="'+esc(c.payments[m]||'')+'" placeholder="0" inputmode="decimal"></label>';}).join('')+
-      '<p class="'+(diff===0?'in':'out')+'">'+(diff===0?'Los pagos suman el total ✓':diff>0?'Faltan '+money(diff):'Sobran '+money(-diff))+'</p></div>';
+      '<p class="mixnote '+(diff===0?'in':'out')+'">'+(diff===0?'Los pagos suman el total ✓':diff>0?'Faltan '+money(diff):'Sobran '+money(-diff))+'</p></div>';
   }else payHTML='<div class="paybtns" role="group" aria-label="Forma de pago">'+pays.map(function(m){return '<button type="button" class="paybtn" data-action="cart-method" data-v="'+esc(m)+'" aria-pressed="'+(c.method===m)+'">'+esc(m)+'</button>';}).join('')+'</div>';
   var lossTotal=admin&&t.costKnown&&t.cost>0&&t.total<t.cost;
   return '<div class="cart panel" aria-label="Venta en curso"><div class="sec-head"><h2 class="h3">Venta'+(c.apptId?' <span class="chip info">Cobro de turno</span>':'')+'</h2><small>'+plural(c.items.length,'artículo','artículos')+'</small></div>'+
@@ -835,8 +888,7 @@ function cartHTML(){
       '<input type="number" id="cart-dval" min="0" step="0.01" value="'+esc(c.discValue)+'" placeholder="0" aria-label="Valor del descuento" inputmode="decimal"></label>'+
       '<label class="cli"><span>Cliente</span><select id="cart-client">'+clientOpts+'</select></label>'+(petOpts?'<label class="cli"><span>Mascota</span>'+petOpts+'</label>':'')+'</div>'+
     '<div class="sec-head"><span class="flabel">Forma de pago</span><label class="fld check"><input type="checkbox" id="cart-mixed"'+(c.mixed?' checked':'')+'><span>Pago mixto</span></label></div>'+payHTML+
-    '<div class="ctotals"><div><span>Subtotal</span><span>'+money(t.sub)+'</span></div>'+(t.disc?'<div><span>Descuento</span><span>− '+money(t.disc)+'</span></div>':'')+
-    '<div class="grand"><span>Total</span><span>'+money(t.total)+'</span></div>'+(lossTotal?'<div class="negtxt">Ojo: venta con pérdida ('+money(t.total-t.cost)+')</div>':'')+'</div>'+
+    totalsHTML(t,lossTotal)+
     '<div class="actions cartacts"><button class="btn ghost" data-action="cart-clear"'+(c.items.length||c.clientId?'':' disabled')+'>Vaciar</button><button class="btn primary big-btn" data-action="cart-pay"'+(c.items.length?'':' disabled')+'>Cobrar '+money(t.total)+' <kbd>F4</kbd></button></div></div>';
 }
 function viewVender(){
@@ -846,7 +898,7 @@ function viewVender(){
     '<input id="posq" type="search" placeholder="'+(window.innerWidth<600?'Buscar o escanear un producto':'Buscar producto o servicio (o escaneá el código)')+'" value="'+esc(ui.posq)+'" aria-label="Buscar producto o servicio" autocomplete="off">'+
     '<ul class="plist" id="posres">'+posResults()+'</ul></div><div id="cartbox">'+cartHTML()+'</div></div></section>';
 }
-function renderCart(){var b=$('#cartbox');if(b)b.innerHTML=cartHTML();}
+function renderCart(){var b=$('#cartbox');if(b)b.innerHTML=cartHTML();saveDraft();}
 function focusSearch(){var q=$('#posq');if(q&&!('ontouchstart' in window))q.focus();}
 async function payCart(){
   var c=ui.cart,t=cartTotals(),admin=isAdmin();
@@ -863,27 +915,33 @@ async function payCart(){
   var r;
   try{r=await apiConfirm('/sales',{body:body});}
   catch(e){if(e.cancelled)return;throw e;}
-  ui.cart=newCart();ui.posq='';
+  resetCart();ui.posq='';
   await reload();
   saleDoneDialog(r.id,r.number,r.total,r.lossLines);
 }
 function saleDoneDialog(id,number,total,loss){
   infoDialog('Venta N° '+number+' registrada','<p class="big">'+money(total)+'</p><p>Se descontó el stock y se registró el ingreso en la caja.</p>'+(loss&&loss.length?'<p class="warnbox">Ojo: se vendió con pérdida '+esc(loss.join(', '))+'.</p>':''),[
-    {label:'Imprimir ticket',fn:function(){return printSale(id);}},
+    {label:'Ver ticket',fn:function(){return printSale(id);}},
     {label:'Nueva venta',cls:'primary',fn:function(){dlg.close();if(ui.view!=='vender')go('vender');else setTimeout(focusSearch,50);}},
   ]);
 }
 // Ticket no fiscal de 58 u 80 mm (comprobante interno), listo para impresora térmica o PDF.
-async function printSale(id){
-  var s=await api('/sales/'+id),st=S.settings;
-  $('#print').innerHTML='<div class="ticket w'+(st.ticketWidth||80)+'"><h1>'+esc(S.shop)+'</h1>'+(st.address?'<p class="c">'+esc(st.address)+'</p>':'')+(st.phone?'<p class="c">Tel. '+esc(st.phone)+'</p>':'')+
+function ticketHTML(s){
+  var st=S.settings;
+  return '<div class="ticket w'+(st.ticketWidth||80)+'"><h1>'+esc(S.shop)+'</h1>'+(st.address?'<p class="c">'+esc(st.address)+'</p>':'')+(st.phone?'<p class="c">Tel. '+esc(st.phone)+'</p>':'')+
     '<p>Comprobante N° '+s.number+'<br>'+fmtDate(s.date)+' '+fmtTime(s.createdAt)+(s.seller?' · '+esc(s.seller):'')+'</p>'+
     (s.client?'<p>Cliente: '+esc(s.client)+(s.pet?' ('+esc(s.pet)+')':'')+'</p>':'')+
     '<table>'+s.items.map(function(it){return '<tr><td>'+fmtQty(it.qty,it.unit)+' × '+esc(it.name)+'<br><small>'+money(it.price)+(it.unit==='kg'?'/kg':' c/u')+'</small></td><td class="r">'+money(r2(it.qty*it.price))+'</td></tr>';}).join('')+'</table>'+
     (s.discount?'<p class="r">Subtotal '+money(s.subtotal)+'<br>Descuento − '+money(s.discount)+'</p>':'')+
     '<p class="r tot">TOTAL '+money(s.total)+'</p><p>'+s.payments.map(function(p){return esc(p.method)+': '+money(p.amount);}).join('<br>')+'</p>'+
     (s.voided?'<p><b>VENTA ANULADA</b></p>':'')+'<p class="foot">'+esc(st.ticketText||'')+'<br>Comprobante no válido como factura.</p></div>';
-  setTimeout(function(){window.print();},50);
+}
+// Vista previa del ticket dentro de la app: el diálogo de impresión del navegador solo aparece al tocar «Imprimir».
+async function printSale(id){
+  var s=await api('/sales/'+id),html=ticketHTML(s);
+  infoDialog('Ticket N° '+s.number,'<div class="ticketprev" aria-label="Vista previa del ticket">'+html+'</div>',[
+    {label:'Imprimir',cls:'primary',fn:function(){$('#print').innerHTML=html;setTimeout(function(){window.print();},50);}},
+  ]);
 }
 
 /* ============================================================
@@ -1543,7 +1601,7 @@ function render(){
   main.innerHTML=v==='resumen'?viewResumen():v==='vender'?viewVender():v==='ventas'?viewVentas():v==='stock'?viewStock():v==='servicios'?viewServicios():
     v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():viewUsers();
   labelTables();
-  if(v==='vender')mountStrip();
+  if(v==='vender'){mountStrip();saveDraft();if(ui.draftNote){ui.draftNote=false;toast('Recuperamos tu venta en curso.');}}
 }
 // En pantallas angostas las tablas se muestran como tarjetas: cada celda lleva el nombre de su columna.
 function labelTables(){
@@ -1847,7 +1905,7 @@ async function setApptStatus(a,status){
 }
 // Cobrar un turno: arma la venta con el servicio, el cliente y la mascota, y lleva a "Vender".
 function chargeAppt(a){
-  ui.cart=newCart();
+  resetCart();
   if(a.serviceId&&servById(a.serviceId))addToCart('service',a.serviceId,1);
   ui.cart.clientId=String(a.clientId);ui.cart.petId=String(a.petId);ui.cart.apptId=a.id;
   if(dlg.open)dlg.close();go('vender');
@@ -1977,7 +2035,7 @@ async function restoreFileForm(data,label){
   var cur=(await api('/backups/current')).counts;
   var cc={};Object.keys(data).forEach(function(k){if(Array.isArray(data[k]))cc[k]=data[k].length;});
   restoreConfirm(label,cc,cur,async function(empty){
-    await api('/restore',{body:{data:data,confirmEmpty:empty},timeout:180000});ui.csel=null;ui.cdetail=null;ui.cart=newCart();await reload();toast('Copia restaurada');
+    await api('/restore',{body:{data:data,confirmEmpty:empty},timeout:180000});ui.csel=null;ui.cdetail=null;resetCart();await reload();toast('Copia restaurada');
   });
 }
 
@@ -2017,7 +2075,7 @@ var actions={
   'cart-dec':function(id,b){var i=Number(b.dataset.i),it=ui.cart.items[i];if(!it)return;var step=it.unit==='kg'?0.1:1,n=r3(it.qty-step);if(n<=0){ui.cart.items.splice(i,1);}else it.qty=n;renderCart();},
   'cart-clear':async function(){
     if(ui.cart.items.length){var ch=await choiceDialog('Vaciar la venta','<p>Se quitan todos los artículos de la venta en curso.</p>',[{label:'Volver',value:null,cls:'ghost'},{label:'Vaciar',value:'ok',cls:'danger'}]);if(ch!=='ok')return;}
-    ui.cart=newCart();renderCart();focusSearch();
+    resetCart();renderCart();focusSearch();
   },
   'cart-method':function(id,b){ui.cart.method=b.dataset.v;renderCart();},
   'cart-pay':function(){return payCart();},
@@ -2130,7 +2188,7 @@ var actions={
     try{
       var cur=(await api('/backups/current')).counts;
       restoreConfirm('«'+b.label+'» del '+fmtTs(b.createdAt),b.counts||{},cur,async function(empty){
-        await api('/backups/'+id+'/restore',{body:{confirmEmpty:empty},timeout:180000});ui.csel=null;ui.cdetail=null;ui.cart=newCart();await reload();toast('Copia restaurada');
+        await api('/backups/'+id+'/restore',{body:{confirmEmpty:empty},timeout:180000});ui.csel=null;ui.cdetail=null;resetCart();await reload();toast('Copia restaurada');
       });
     }finally{btn.disabled=false;btn.classList.remove('busy');btn.textContent=label;}
   },
@@ -2223,14 +2281,14 @@ document.addEventListener('input',function(e){
   else if(id==='stq'){ui.stq=e.target.value;ui.stLimit=PAGE;var t=$('#stocktable');if(t){t.innerHTML=stockTable();labelTables();}}
   else if(id==='cliq'){ui.cliq=e.target.value;ui.clLimit=PAGE;$('#clist').innerHTML=clientListHTML();}
   else if(id==='supq'){ui.supq=e.target.value;$('#srows').innerHTML=supplierRows();labelTables();}
-  else if(id==='cart-dval'){ui.cart.discValue=e.target.value;}
+  else if(id==='cart-dval'){ui.cart.discValue=e.target.value;refreshCartTotals();saveDraft();}
   else if(id==='salesq'||id==='cq'){
     // Búsqueda en el servidor (Ventas y Caja): espera a que termines de escribir.
     var v=e.target.value;clearTimeout(searchTimer);
     searchTimer=setTimeout(function(){if(id==='salesq'){ui.sq=v;ui.saLimit=PAGE;}else{ui.cq=v;ui.caLimit=PAGE;}refreshView().then(function(){var el=$('#'+id);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}});},350);
   }
-  else if(e.target.classList&&e.target.classList.contains('creason')){var it=ui.cart.items[Number(e.target.dataset.i)];if(it)it.reason=e.target.value;}
-  else if(e.target.classList&&e.target.classList.contains('cpay')){ui.cart.payments[e.target.dataset.m]=e.target.value;}
+  else if(e.target.classList&&e.target.classList.contains('creason')){var it=ui.cart.items[Number(e.target.dataset.i)];if(it)it.reason=e.target.value;saveDraft();}
+  else if(e.target.classList&&e.target.classList.contains('cpay')){ui.cart.payments[e.target.dataset.m]=e.target.value;refreshCartTotals();saveDraft();}
 });
 document.addEventListener('change',function(e){
   var t=e.target,id=t.id;
@@ -2248,12 +2306,12 @@ document.addEventListener('change',function(e){
     }else if(v>=0)it.price=r2(v);
     renderCart();return;
   }
-  if(t.classList.contains('cpay')){renderCart();return;}
+  if(t.classList.contains('cpay')){refreshCartTotals();saveDraft();return;}
   if(id==='cart-mixed'){ui.cart.mixed=t.checked;if(t.checked){var tt=cartTotals();ui.cart.payments={};ui.cart.payments[ui.cart.method]=String(tt.total);}renderCart();return;}
   if(id==='cart-dtype'){ui.cart.discType=t.value;renderCart();return;}
-  if(id==='cart-dval'){ui.cart.discValue=t.value;renderCart();return;}
+  if(id==='cart-dval'){ui.cart.discValue=t.value;refreshCartTotals();saveDraft();return;}
   if(id==='cart-client'){ui.cart.clientId=t.value;var c=clientById(t.value);ui.cart.petId=c&&c.pets.length===1?String(c.pets[0].id):'';renderCart();return;}
-  if(id==='cart-pet'){ui.cart.petId=t.value;return;}
+  if(id==='cart-pet'){ui.cart.petId=t.value;saveDraft();return;}
   if(id==='stcat'){ui.cat=t.value;ui.stLimit=PAGE;render();return;}
   if(id==='auser'||id==='aaction'){ui[id]=t.value;refreshView();return;}
   var ranges={sfrom:['sfrom','sto'],sto:['sfrom','sto'],cfrom:['cfrom','cto'],cto:['cfrom','cto'],afrom:['afrom','ato'],ato:['afrom','ato'],sumfrom:['from','to'],sumto:['from','to']};
