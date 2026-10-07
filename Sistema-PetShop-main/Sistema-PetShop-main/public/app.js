@@ -1546,9 +1546,9 @@ function viewCaja(){
 function usagePanel(){
   var u=ui.usage;if(!u)return '';
   var p=Math.min(100,Math.round(u.bytes/u.limit*100));
-  return '<section class="sec"><h2 class="h3">Espacio de la base de datos</h2><p><b>'+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>(plan gratuito de Supabase; las copias guardadas ocupan '+fmtBytes(u.backupBytes)+')</small></p>'+
+  return '<section class="sec"><h2 class="h3">Espacio de la base de datos</h2><p><b>'+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>(plan gratuito; las copias guardadas ocupan '+fmtBytes(u.backupBytes)+')</small></p>'+
     '<div class="meter'+(p>=80?' hot':'')+'" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+p+'" aria-label="Espacio usado"><i style="width:'+Math.max(p,1)+'%"></i></div>'+
-    (p>=80?'<p class="warnbox">Queda poco espacio. Descargá una copia y borrá copias guardadas viejas, o pasá a un plan pago de Supabase.</p>':'')+'</section>';
+    (p>=80?'<p class="warnbox">Queda poco espacio. Descargá una copia y borrá copias guardadas viejas, o pasá a un plan pago de la base de datos.</p>':'')+'</section>';
 }
 function viewBackups(){
   if(!ui.backups)return loadingView('Copias de seguridad');

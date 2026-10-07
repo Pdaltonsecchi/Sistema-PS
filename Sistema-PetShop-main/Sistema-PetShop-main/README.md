@@ -19,7 +19,6 @@ Sistema pensado para **el dueño del pet shop**: el stock de lo que vendés, las
 | **Caja** | Ingresos y egresos con forma de pago, efectivo que debería haber, **cierre de caja diario** y exportación a Excel (CSV) | Dueño |
 | **Copias de seguridad** | Copia automática diaria, descarga comprimida a tu computadora y espacio usado de la base | Dueño |
 | **Usuarios y actividad** | Dueño/administrador y empleados, y el **registro de actividad** (cambios de precio, anulaciones, stock, caja, usuarios) | Dueño |
-| **Configuración** | Nombre, dirección y ticket; horario comercial; medios de pago; gastos fijos; umbrales; **informe semanal por email** | Dueño |
 
 Se puede **instalar como app** en el celular o la computadora (en Chrome: menú ⋮ → «Instalar app» / «Agregar a pantalla principal»).
 
@@ -27,7 +26,7 @@ Vas a usar tres servicios gratuitos:
 
 | Servicio | Para qué sirve |
 |---|---|
-| **Supabase** | Guarda todos los datos (la base de datos) |
+| **Neon** | Guarda todos los datos (la base de datos PostgreSQL) |
 | **GitHub** | Guarda estos archivos para que Render los pueda leer |
 | **Render** | Hace funcionar el sistema en internet y le pone HTTPS solo |
 
@@ -35,19 +34,22 @@ Tiempo estimado: 30 a 45 minutos.
 
 ---
 
-## Paso 1 · Crear la base de datos (Supabase)
+## Paso 1 · Crear la base de datos (Neon)
 
-1. Entrá a **supabase.com** y creá una cuenta.
-2. Tocá **New project**. Poné el nombre `petshop`.
-3. En **Database password** elegí una contraseña **solo con letras y números** (sin símbolos como @ # / %) y **guardala**.
-4. En **Region** elegí la más cercana (por ejemplo *South America (São Paulo)*).
-5. Esperá unos minutos a que termine de crearse.
-6. Tocá el botón **Connect** (arriba, en la barra de tu proyecto) y elegí **Session pooler**. Copiá la dirección: empieza con `postgresql://postgres.` y contiene `pooler.supabase.com`.
-   - Si no encontrás *Session pooler*: copiá la de **Transaction pooler** (termina en `:6543/postgres`) y cambiá `6543` por `5432`.
-   - No uses la dirección que tiene `db.` seguido de tu código y `.supabase.co`: es la conexión directa y desde Render no funciona.
-7. Reemplazá `[YOUR-PASSWORD]` por la contraseña del paso 3 (sin los corchetes).
+1. Entrá a **neon.tech** y creá una cuenta (podés usar Google o GitHub).
+2. Tocá **Create project**. Nombre: `petshop`. En **Postgres version** dejá la que viene (16 o más) y en **Region** elegí la más cercana (por ejemplo *AWS South America (São Paulo)*).
+3. Al terminar, Neon muestra la ventana **Connect to your database** (si no, tocá **Connect** arriba a la derecha del panel del proyecto).
+4. Elegí la **Branch** `main`, la **Database** `neondb` y el **Role** que viene por defecto.
+5. Dejá activado **Connection pooling** (la dirección tiene `-pooler` en el nombre del servidor) y copiá el **Connection string**. Se ve así:
 
-Esa dirección es tu `DATABASE_URL`. **No hace falta crear tablas**: el sistema las crea solo la primera vez.
+   `postgresql://neondb_owner:CONTRASEÑA@ep-xxxx-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require`
+
+   - Tocá **Show password** para que la dirección salga completa, con la contraseña real (no los asteriscos).
+   - Si preferís la conexión directa, destildá *Connection pooling*: también funciona.
+
+Esa dirección es tu `DATABASE_URL`. **No hace falta crear tablas**: el sistema las crea solo la primera vez que arranca.
+
+> Neon "duerme" la base después de 5 minutos sin uso y la despierta sola en menos de un segundo con la primera consulta. No hace falta hacer nada.
 
 ## Paso 2 · El código en GitHub
 
@@ -56,29 +58,30 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 ## Paso 3 · Poner el sistema en internet (Render)
 
 1. Entrá a **render.com** y creá una cuenta (podés entrar con tu cuenta de GitHub).
-2. Tocá **New +** → **Web Service** y conectá el repositorio `Sistema-PetShop`.
+2. Tocá **New +** → **Web Service** y conectá el repositorio `Sistema-PS` y elegí la rama `main` (o la rama que quieras publicar).
 3. Completá:
    - **Language / Runtime:** Node
-   - **Root Directory:** dejalo vacío (el sistema está en la raíz del repositorio)
-   - **Build Command:** `npm install`
+   - **Root Directory:** `Sistema-PetShop-main/Sistema-PetShop-main` (la app está en esa subcarpeta del repositorio; si lo dejás vacío, Render no encuentra `package.json` y falla el build)
+   - **Build Command:** `npm install --omit=dev`
    - **Start Command:** `npm start`
    - **Instance Type:** Free
 4. En **Environment Variables** agregá:
 
 | Nombre | Qué poner |
 |---|---|
-| `DATABASE_URL` | La dirección del Paso 1 (con tu contraseña) |
+| `DATABASE_URL` | La dirección de Neon del Paso 1 (con la contraseña real) |
+| `DB_LIMIT_MB` | (opcional) Tope de espacio que muestra *Copias de seguridad*; por defecto 500 |
 | `SESSION_SECRET` | Un texto largo al azar, de 40 caracteres o más |
 | `ADMIN_EMAIL` | Tu email (va a ser tu usuario para ingresar) |
 | `ADMIN_PASSWORD` | La contraseña con la que vas a ingresar (mínimo 8 caracteres) |
 | `NODE_ENV` | `production` |
-| `SHOP_NAME` | (opcional) El nombre de tu negocio. También se cambia después en **Configuración** |
+| `SHOP_NAME` | (opcional) El nombre de tu negocio |
 | `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM`, `CRON_SECRET` | (opcionales) Para el informe semanal por email: ver más abajo |
 
 5. En **Advanced** poné **Health Check Path:** `/healthz`.
-6. Tocá **Create Web Service** y esperá. Cuando diga *Live*, Render te muestra la dirección de tu sistema (algo como `https://petshop.onrender.com`).
+6. Tocá **Create Web Service** y esperá. Cuando diga *Live* (en los *Logs* tiene que aparecer que el sistema arrancó, sin errores de base), Render te muestra la dirección de tu sistema (algo como `https://petshop.onrender.com`).
 
-> Atajo opcional: el proyecto trae un archivo `render.yaml`. Si en Render elegís **New +** → **Blueprint**, carga esta configuración sola y solo te pide `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` y `SHOP_NAME`.
+> El archivo `render.yaml` es un atajo (**New +** → **Blueprint**), pero Render solo lo lee si está en la raíz del repositorio. Como acá la app está en una subcarpeta, usá la carga manual de arriba (o copiá `render.yaml` a la raíz y agregale `rootDir: Sistema-PetShop-main/Sistema-PetShop-main` al servicio).
 
 ## Paso 4 · Primer ingreso y carga inicial
 
@@ -94,28 +97,17 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 
 ## El día a día
 
-- **Vender:** pantalla *Vender* (o botón *Vender* en cada producto del Stock). Con un **lector de código de barras USB** solo pasás el producto: se suma solo a la venta. Con el celular usá **📷 Escanear con la cámara** (hace falta abrir el sistema con https, como en Render). Detalle y prueba paso a paso: [`docs/escaner.md`](docs/escaner.md).
-- **Llegó mercadería:** en *Stock*, botón **+** del producto o **📷 Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja.
+- **Vender:** pantalla *Vender* (o botón *Vender* en cada producto del Stock). Con un **lector de código de barras USB** solo pasás el producto: se suma solo a la venta. Con el celular usá **Escanear con la cámara** (hace falta abrir el sistema con https, como en Render). Detalle y prueba paso a paso: [`docs/escaner.md`](docs/escaner.md).
+- **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja.
 - **Qué pedir:** *Stock → Para pedir* te arma el pedido por proveedor; **Copiar pedido** o **Enviar por WhatsApp**.
 - **Peluquería:** agendá el turno en *Agenda* (con quién lo atiende); cuando está listo, tocá el turno → **Listo para retirar** → **Cobrar**.
 - **Fin del día:** *Caja → Cierre de caja*: contás la plata, la escribís y el sistema te dice si hay diferencia.
 - **Inflación:** *Stock → % Actualizar precios* sube los precios de una categoría, marca o proveedor de una vez, con redondeo.
 - **Cambiar un precio en una venta:** solo el dueño, escribiendo el motivo. Queda en *Usuarios y actividad → Actividad*.
 
-## Informe semanal por email (opcional)
+## Informe semanal por email
 
-Todos los lunes (o el día que elijas) te llega un resumen de la semana: vendido, ganancia, comparación, lo más vendido, poco stock, vencimientos, clientes que dejaron de venir y turnos «No vino».
-
-1. Creá una cuenta gratuita en **Resend** (resend.com) o **Brevo** (brevo.com) y verificá tu email o dominio como remitente.
-2. Copiá la **API key**.
-3. En Render → tu servicio → **Environment**, agregá:
-   - `EMAIL_PROVIDER` = `resend` o `brevo`
-   - `EMAIL_API_KEY` = la API key
-   - `EMAIL_FROM` = `Mi Pet Shop <avisos@tudominio.com>` (el remitente verificado)
-4. En el sistema: **Configuración → Informe semanal**: activalo, elegí día, hora y destinatarios, y tocá **Enviarme el informe ahora** para probarlo. Abajo ves los envíos y, si falló alguno, el motivo.
-5. **Importante (plan gratuito):** Render se duerme cuando nadie lo usa, y dormido no puede mandar el informe. Para que llegue igual, creá una tarea gratuita en **cron-job.org** que todos los días a la hora elegida haga un **POST** a `https://TU-SISTEMA.onrender.com/api/cron/weekly-report` con el encabezado `X-Cron-Secret` igual a la variable `CRON_SECRET` de Render (si usaste el Blueprint, Render la genera sola; si no, creala con un texto largo al azar). El sistema envía una sola vez por semana, aunque lo llamen todos los días.
-
-Si no cargás estas variables, la función queda desactivada y el sistema funciona igual.
+La pantalla *Configuración* se quitó, así que el informe semanal por email ya no se activa desde el sistema. Las variables `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM` y `CRON_SECRET` quedan sin efecto salvo que se vuelva a agregar esa pantalla.
 
 ## Copias de seguridad (leer con atención)
 
@@ -131,7 +123,7 @@ La base de datos gratuita **no incluye copias de seguridad propias**. Por eso el
 Una copia que nunca se probó no es una copia. Para comprobar que las tuyas sirven, sin tocar tus datos reales:
 
 1. Descargá la copia comprimida del día.
-2. Creá un **segundo proyecto gratuito en Supabase** (por ejemplo `petshop-prueba`) y un **segundo servicio en Render** apuntando a esa base (mismas variables, otro `DATABASE_URL`).
+2. Creá un **segundo proyecto gratuito en Neon** (por ejemplo `petshop-prueba`) y un **segundo servicio en Render** apuntando a esa base (mismas variables, otro `DATABASE_URL`).
 3. Entrá al sistema de prueba → *Copias de seguridad* → **Cargar desde archivo** → elegí la copia → confirmá.
 4. Revisá que coincidan la cantidad de productos, el stock de 3 productos al azar, las ventas del último día y el total del mes en *Resumen*.
 5. Listo: borrá el servicio y el proyecto de prueba.
@@ -139,8 +131,17 @@ Una copia que nunca se probó no es una copia. Para comprobar que las tuyas sirv
 ## Cosas que tenés que saber del plan gratuito
 
 - **Render (gratis):** si nadie usa el sistema durante 15 minutos, se "duerme". La próxima vez que alguien lo abra, tarda cerca de un minuto en despertar. Si te molesta en el mostrador, el plan pago más chico (Starter) lo deja siempre encendido.
-- **Supabase (gratis):** el proyecto se pausa si pasa una semana sin usarse (usándolo todos los días no pasa). Si se pausa, los datos siguen ahí y lo reactivás desde el panel de Supabase.
-- **Espacio:** 500 MB. El sistema guarda solo texto y números (sin fotos ni archivos), así que alcanza para años de ventas. En *Copias de seguridad* ves cuánto espacio usás.
+- **Neon (gratis):** la base se duerme a los 5 minutos sin uso y despierta sola en menos de un segundo; los datos no se pierden. No se pausa por semanas de inactividad.
+- **Espacio:** unos 500 MB en el plan gratuito de Neon. El sistema guarda solo texto y números (sin fotos ni archivos), así que alcanza para años de ventas. En *Copias de seguridad* ves cuánto espacio usás.
+
+## Pasar de Supabase a Neon (si ya tenías datos)
+
+1. En el sistema actual (el que usa Supabase): *Copias de seguridad → Descargar copia comprimida*. Guardá el archivo `.json.gz`.
+2. Creá la base en Neon (Paso 1) y, en Render, cambiá `DATABASE_URL` por la dirección de Neon. Render reinicia el sistema solo.
+3. Ingresá con `ADMIN_EMAIL` y `ADMIN_PASSWORD` (el sistema crea ese usuario en la base nueva, que arranca vacía).
+4. *Copias de seguridad → Cargar desde archivo* → elegí el archivo del paso 1 → confirmá.
+5. Revisá productos, clientes, ventas y el total del mes en *Resumen*. Los **usuarios no se copian**: volvé a crear a tus empleados en *Usuarios y actividad*.
+6. Recién cuando todo coincida, borrá el proyecto de Supabase.
 
 ## Seguridad
 

@@ -33,7 +33,7 @@ const USER_COLS = new Set(['created_by', 'user_id']);
 // Valores por defecto para columnas que no existían en copias anteriores.
 const COL_DEFAULTS = { is_gift: false, price_reason: '', staff: '' };
 
-// Retención pensada para los 500 MB del plan gratuito de Supabase (las copias viven en la misma base).
+// Retención pensada para los 500 MB de los planes gratuitos (Neon, Supabase) (las copias viven en la misma base).
 const KEEP_AUTO = 7;
 const KEEP_MANUAL = 10;
 

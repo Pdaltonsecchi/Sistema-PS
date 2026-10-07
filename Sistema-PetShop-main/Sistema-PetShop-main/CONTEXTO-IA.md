@@ -22,10 +22,10 @@ Node.js (http nativo, sin framework)
   server/util.js         → validaciones con mensajes en lenguaje natural, listas fijas, HttpError(status, msg, {code})
         │
         ▼
-PostgreSQL en Supabase (plan gratuito, "Session pooler" :5432). db/schema.sql se ejecuta en cada arranque.
+PostgreSQL en Neon (plan gratuito; también anda en Supabase con "Session pooler" :5432). db/schema.sql se ejecuta en cada arranque.
 ```
 
-Hosting: Render Web Service plan Free (`render.yaml`). Única dependencia: `pg`. No se usa Supabase Storage ni Auth.
+Hosting: Render Web Service plan Free (`render.yaml`). Única dependencia: `pg`. No se usan funciones propias del proveedor de base (Storage, Auth, etc.): cualquier PostgreSQL con SSL sirve.
 
 ## Reglas clave
 
