@@ -61,7 +61,7 @@ test('las listas de la pantalla coinciden con las del servidor', () => {
 
 test('la pantalla no guarda datos sensibles en el navegador (solo preferencias)', () => {
   const keys = [...app.matchAll(/store\.set\('([\w_]+)'/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(keys)].sort(), ['petshop_beep', 'petshop_last_export', 'petshop_period']);
+  assert.deepEqual([...new Set(keys)].sort(), ['petshop_beep', 'petshop_cart_draft', 'petshop_last_export', 'petshop_period']);
   assert.ok(!/localStorage\.setItem\(/.test(app.replace(/var store=[^\n]*/, '')), 'todo acceso a localStorage pasa por store');
 });
 
