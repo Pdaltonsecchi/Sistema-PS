@@ -198,8 +198,35 @@ test('agenda: dos turnos a la misma hora se pueden pisar solo si los atiende per
   assert.equal(same.status, 409);
   assert.equal(same.body.code, 'overlap_forbidden');
   assert.match(same.body.error, /ya atiende a Michi/);
-  const other = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, staff: 'Luis' });
-  assert.equal(other.status, 200);
+  const other = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, staff: 'Luis', confirmOverlap: true });
+  assert.equal(other.status, 200); // personal distinto: se permite (avisando, ver el test siguiente)
+});
+
+test('agenda: dos turnos a la misma hora con mascotas y personal distintos avisan, y se pueden agendar si se confirma', async () => {
+  const existing = [{ id: 9, pet_id: 2, on_date: future, at_time: '10:00:00', duration_min: 60, status: 'reservado', staff: 'Ana', pet: 'Michi' }];
+  reset(apptRules(existing));
+  const w = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:00', duration: 60, staff: 'Luis' });
+  assert.equal(w.status, 409);
+  assert.equal(w.body.code, 'overlap_soft');
+  assert.match(w.body.error, /Ya hay otro turno en ese horario: 10:00 \(Michi, Ana\)/);
+  const ok = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:00', duration: 60, staff: 'Luis', confirmOverlap: true });
+  assert.equal(ok.status, 200);
+  // sin personal asignado también avisa
+  const w2 = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 30 });
+  assert.equal(w2.body.code, 'overlap_soft');
+});
+
+test('agenda: confirmar guarda confirmed_at y el cambio de estado devuelve el estado real; el pase automático exige confirmación previa al fin del turno', async () => {
+  reset([[/UPDATE appointments SET status = \$1/, [{ id: 7, status: 'confirmado' }]]]);
+  const r = await call('staff', 'POST', '/api/appointments/7/status', { status: 'confirmado' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'confirmado');
+  assert.ok(state.log.some((q) => /confirmed_at = COALESCE\(confirmed_at, now\(\)\)/.test(q.sql)));
+  assert.ok(!state.log.some((q) => /status = 'listo'/.test(q.sql) && /UPDATE appointments/.test(q.sql)), 'confirmar no debe tocar «listo»');
+  reset([[/FROM appointments a JOIN pets/, []]]);
+  await call('staff', 'GET', '/api/appointments?from=2099-06-01&to=2099-06-07');
+  const auto = state.log.find((q) => /UPDATE appointments SET status = 'listo'/.test(q.sql));
+  assert.ok(auto && /confirmed_at IS NOT NULL/.test(auto.sql) && /confirmed_at AT TIME ZONE[^)]*\) </.test(auto.sql), 'solo avanza turnos confirmados antes de que terminen');
 });
 
 test('agenda: turno contiguo (11 a 12 después de 10 a 11) no se pisa', async () => {

@@ -19,7 +19,7 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      # Opcional: nombre del negocio (también se puede cambiar en Configuración).
+      # Opcional: nombre del negocio (opcional).
       - key: SHOP_NAME
         sync: false
       # Opcional: informe semanal por email (resend o brevo). Sin estas, el informe queda desactivado.

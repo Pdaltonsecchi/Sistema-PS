@@ -173,6 +173,16 @@ module.exports = function (H) {
         details: hits.map((x) => ({ id: x.id, pet: x.pet, time: x.time, duration: x.duration, staff: x.staff })),
       });
     }
+    // Aviso (se puede confirmar): hay otro turno a la misma hora, de otra mascota y con otro personal.
+    const cur = { id: selfId || 0, petId: a.petId, date: a.date, time: a.time, duration: a.duration, status: a.status };
+    const soft = L.findOverlaps(cur, others);
+    if (soft.length && b.confirmOverlap !== true) {
+      const list = soft.map((x) => x.time + ' (' + x.pet + (x.staff ? ', ' + x.staff : '') + ')').join('; ');
+      throw new HttpError(409, 'Ya hay ' + (soft.length === 1 ? 'otro turno' : soft.length + ' turnos') + ' en ese horario: ' + list + '. ¿Lo agendás igual?', {
+        code: 'overlap_soft',
+        details: soft.map((x) => ({ id: x.id, pet: x.pet, time: x.time, duration: x.duration, staff: x.staff })),
+      });
+    }
     const s = await getSettings(c);
     if (!['cancelado', 'no_vino'].includes(a.status) && !L.withinHours(s.hours, a.date, a.time, a.duration) && b.confirmHours !== true) {
       const h = s.hours[L.weekday(a.date)];
@@ -181,6 +191,8 @@ module.exports = function (H) {
   }
   /** Cuándo empezó y terminó de verdad un turno (para comparar con la duración estimada). */
   function stamps(status) {
+    if (status === 'reservado') return ', confirmed_at = NULL';
+    if (status === 'confirmado') return ', confirmed_at = COALESCE(confirmed_at, now())';
     if (status === 'en_curso') return ', started_at = COALESCE(started_at, now())';
     if (status === 'listo' || status === 'entregado') return ', started_at = COALESCE(started_at, now()), finished_at = COALESCE(finished_at, now())';
     return '';
@@ -230,8 +242,9 @@ module.exports = function (H) {
   // Cambio rápido de estado (confirmado, listo para retirar, no vino...).
   add('POST', '/api/appointments/:id/status', async (ctx) => {
     const status = U.oneOf(ctx.body.status, U.APPT_STATUS, 'Estado');
-    const r = await db.query('UPDATE appointments SET status = $1' + stamps(status) + ' WHERE id = $2 RETURNING id', [status, U.idParam(ctx.params.id)]);
+    const r = await db.query('UPDATE appointments SET status = $1' + stamps(status) + ' WHERE id = $2 RETURNING id, status', [status, U.idParam(ctx.params.id)]);
     if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese turno. Recargá la agenda.');
+    return { status: r.rows[0].status };
   });
   add('DELETE', '/api/appointments/:id', async (ctx) => {
     await db.query('DELETE FROM appointments WHERE id = $1', [U.idParam(ctx.params.id)]);

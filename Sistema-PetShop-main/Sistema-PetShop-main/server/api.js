@@ -256,12 +256,15 @@ async function cashSummary() {
 
 /**
  * Un turno confirmado pasa solo a «Listo para retirar» cuando termina su horario (hora de inicio + duración),
- * medido en hora de Argentina.
+ * medido en hora de Argentina. Solo si se confirmó ANTES de que terminara: un turno que se confirma cuando su horario
+ * ya pasó se queda en «Confirmado» hasta que alguien lo marque (si no, saltaría de estado sin que nadie lo pida).
  */
 async function autoReady(q) {
   await q.query(
     "UPDATE appointments SET status = 'listo', started_at = COALESCE(started_at, now()), finished_at = COALESCE(finished_at, now()) " +
-      "WHERE status = 'confirmado' AND (on_date + at_time + duration_min * interval '1 minute') <= (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')"
+      "WHERE status = 'confirmado' AND confirmed_at IS NOT NULL " +
+      "AND (on_date + at_time + duration_min * interval '1 minute') <= (now() AT TIME ZONE 'America/Argentina/Buenos_Aires') " +
+      "AND (confirmed_at AT TIME ZONE 'America/Argentina/Buenos_Aires') < (on_date + at_time + duration_min * interval '1 minute')"
   );
 }
 
