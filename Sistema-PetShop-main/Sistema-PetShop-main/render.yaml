@@ -1,0 +1,33 @@
+# Atajo opcional para Render ("Blueprint"). Si lo usás, Render carga esta configuración
+# y solo te pide los valores marcados como secretos (sync: false).
+services:
+  - type: web
+    name: petshop
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      # Opcional: nombre del negocio (también se puede cambiar en Configuración).
+      - key: SHOP_NAME
+        sync: false
+      # Opcional: informe semanal por email (resend o brevo). Sin estas, el informe queda desactivado.
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true

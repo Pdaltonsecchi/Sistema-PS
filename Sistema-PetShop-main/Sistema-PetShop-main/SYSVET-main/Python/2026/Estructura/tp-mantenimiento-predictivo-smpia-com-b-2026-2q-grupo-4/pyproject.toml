@@ -1,0 +1,22 @@
+[project]
+name = "tp-mantenimiento-predictivo-smpia-com-b-2026-2q-grupo-4"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "lucabevi100", email = "lbevilacqua@itba.edu.ar" }
+]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+tp-mantenimiento-predictivo-smpia-com-b-2026-2q-grupo-4 = "tp_mantenimiento_predictivo_smpia_com_b_2026_2q_grupo_4:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]

@@ -1,0 +1,20 @@
+{
+  "name": "petshop-sistema",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Sistema de gestión para el dueño de un pet shop: stock, ventas, caja, ganancias, clientes con mascotas, agenda de peluquería, proveedores, reportes y copias de seguridad",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node test/run.js",
+    "demo": "node test/demo.js",
+    "iconos": "node scripts/iconos.js",
+    "check": "node --check server/index.js && node --check server/api.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}
