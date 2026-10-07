@@ -26,14 +26,14 @@ const SPECIES_OPTS = ['Perro', 'Gato', 'Perro y gato', 'Otras mascotas'];
 const UNITS = ['u', 'kg'];
 const SERV_CATS = ['Baño', 'Peluquería', 'Otros'];
 const PET_SPECIES = ['Perro', 'Gato', 'Otro'];
-const PET_SIZES = ['Chico', 'Mediano', 'Grande', 'Gigante'];
+const PET_SIZES = ['Chico', 'Mediano', 'Grande'];
 // Ingresos y egresos tienen categorías separadas. Las ventas entran solas como "Ventas".
 const CASH_IN_CATS = ['Ventas', 'Aporte de capital', 'Otros ingresos'];
 const CASH_OUT_CATS = ['Compra de mercadería', 'Alquiler y servicios', 'Sueldos', 'Impuestos', 'Insumos de peluquería', 'Retiro de caja', 'Otros'];
 // Motivos permitidos al ajustar stock a mano.
 const ADJUST_REASONS = ['Rotura', 'Vencimiento', 'Error de carga', 'Uso interno (peluquería)', 'Faltante', 'Otro'];
-// Estados de un turno de peluquería.
-const APPT_STATUS = ['reservado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado'];
+// Estados de un turno.
+const APPT_STATUS = ['reservado', 'confirmado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado'];
 
 const TZ = 'America/Argentina/Buenos_Aires';
 

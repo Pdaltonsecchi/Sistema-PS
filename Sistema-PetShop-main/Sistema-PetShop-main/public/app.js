@@ -49,13 +49,16 @@ var SPECIES_OPTS=[['','Todas / no aplica'],['Perro','Perro'],['Gato','Gato'],['P
 var UNIT_OPTS=[['u','Por unidad'],['kg','Suelto, por kilo']];
 var SERV_CATS=['Baño','Peluquería','Otros'];
 var PET_SPECIES=['Perro','Gato','Otro'];
-var PET_SIZES=[['','Sin definir'],['Chico','Chico'],['Mediano','Mediano'],['Grande','Grande'],['Gigante','Gigante']];
+var PET_SIZES=[['Chico','Perro chico'],['Mediano','Perro mediano'],['Grande','Perro grande']];
+var sizeLabel=function(v){var m=PET_SIZES.find(function(x){return x[0]===v;});return m?m[1]:(v==='Gigante'?'Perro grande':v||'');};
 var CASH_IN_CATS=['Ventas','Aporte de capital','Otros ingresos'];
 var CASH_OUT_CATS=['Compra de mercadería','Alquiler y servicios','Sueldos','Impuestos','Insumos de peluquería','Retiro de caja','Otros'];
 var ADJUST_REASONS=['Rotura','Vencimiento','Error de carga','Uso interno (peluquería)','Faltante','Otro'];
 var ALL_PAY=['Efectivo','Transferencia','Tarjeta de débito','Tarjeta de crédito'];
-var APPT_STATUS=[['reservado','Reservado'],['en_curso','En curso'],['listo','Listo para retirar'],['entregado','Entregado'],['no_vino','No vino'],['cancelado','Cancelado']];
-var APPT_LABEL={};APPT_STATUS.forEach(function(x){APPT_LABEL[x[0]]=x[1];});
+var APPT_STATUS=[['reservado','Reservado'],['confirmado','Confirmado'],['listo','Listo para retirar'],['entregado','Entregado'],['no_vino','No vino'],['cancelado','Cancelado']];
+var APPT_LABEL={en_curso:'En curso'};APPT_STATUS.forEach(function(x){APPT_LABEL[x[0]]=x[1];});
+// Al agendar solo se elige entre Reservado y Confirmado; los demás estados salen de los botones del turno.
+var APPT_FORM_STATUS=[['reservado','Reservado'],['confirmado','Confirmado']];
 var APPT_VIEWS=[['day','Día'],['week','Semana'],['month','Mes']];
 var WEEKDAYS_LONG=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 var EXPIRY_DAYS=30; // aviso de vencimiento: productos que vencen en los próximos 30 días
@@ -70,7 +73,7 @@ var period0=function(){var p=store.get('petshop_period');return ['today','yester
 var ui={view:'',cart:newCart(),posq:'',scanStrip:false,
   stq:'',cat:'all',stf:'all',stab:'products',stLimit:PAGE,
   sales:null,sfrom:'',sto:'',sq:'',saLimit:PAGE,
-  sum:{period:period0(),from:'',to:'',tab:'general',data:null,monthly:null,compare:null,hours:null,products:null,pgroup:'product',clients:null,staff:null,proj:null,topBy:'units',monthsOpen:false},
+  sum:{period:period0(),from:'',to:'',tab:'general',sub:'panorama',data:null,monthly:null,compare:null,hours:null,products:null,pgroup:'product',clients:null,staff:null,proj:null,topBy:'units',monthsOpen:false},
   cq:'',cfopen:false,cashp:'month',cashf:'all',cashm:'all',cash:null,closings:null,cfrom:'',cto:'',caLimit:PAGE,
   backups:null,usage:null,users:null,utab:'users',audit:null,afrom:'',ato:'',auser:'',aaction:'',
   suppliers:null,supq:'',reportLog:null,
@@ -145,7 +148,7 @@ async function api(path,opts){
 }
 // Avisos del servidor que se pueden confirmar ("¿Guardar igual?"): código → dato que se reenvía.
 var CONFIRMS={loss:['confirmLoss','Guardar igual'],duplicate:['confirmDuplicate','Guardar igual'],past:['confirmPast','Guardar igual'],hours:['confirmHours','Reservar igual'],
-  overlap:['confirmOverlap','Reservar igual'],expired:['confirmExpired','Vender igual'],future_date:['confirmFuture','Sí, es correcta'],barcode_taken:['reassign','Pasar el código']};
+  expired:['confirmExpired','Vender igual'],future_date:['confirmFuture','Sí, es correcta'],barcode_taken:['reassign','Pasar el código']};
 /** Como api(), pero si el servidor pide confirmación muestra la pregunta y reintenta con la confirmación. */
 async function apiConfirm(path,opts){
   for(var i=0;i<6;i++){
@@ -246,7 +249,7 @@ function fieldMessage(el){
 }
 function clearFieldErrors(f){f.querySelectorAll('.ferr').forEach(function(x){x.textContent='';});f.querySelectorAll('[aria-invalid]').forEach(function(x){x.removeAttribute('aria-invalid');});}
 function showFieldError(f,el,msg){
-  var e=f.querySelector('#'+el.id+'_err');if(e)e.textContent='⚠ '+msg;
+  var e=f.querySelector('#'+el.id+'_err');if(e)e.textContent=''+msg;
   el.setAttribute('aria-invalid','true');
 }
 /** Valida el formulario y deja los mensajes debajo de cada campo; lleva el foco al primer error. */
@@ -371,7 +374,6 @@ async function loadView(){
     if(ui.utab==='actividad')await loadAudit();
     else ui.users=(await api('/users')).items;
   }
-  else if(v==='config'&&isAdmin()){var s=await Promise.all([api('/settings'),api('/report/log')]);S.settings=s[0];ui.reportLog=s[1];}
 }
 async function loadSales(){
   var p=[];
@@ -460,13 +462,16 @@ async function refreshView(){
    Navegación, avisos y usuario
    ============================================================ */
 function navItems(){
-  var a=[['resumen','📊 Resumen'],['vender','🛒 Vender'],['ventas','🧾 Ventas'],['stock','📦 Stock'],['servicios','✂️ Servicios'],['agenda','📅 Agenda'],['clientes','👤 Clientes'],['proveedores','🚚 Proveedores']];
-  if(isAdmin())a.push(['caja','💵 Caja'],['copias','💾 Copias de seguridad'],['usuarios','🔑 Usuarios y actividad'],['config','⚙️ Configuración']);
+  var a=[['resumen','Resumen','Principal'],['vender','Vender','Principal'],['ventas','Ventas','Principal'],['agenda','Agenda','Principal'],
+    ['stock','Stock','Catálogo'],['servicios','Servicios','Catálogo'],['clientes','Clientes','Contactos'],['proveedores','Proveedores','Contactos']];
+  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración']);
   return a;
 }
 function renderNav(){
+  var last='';
   $('#nav').innerHTML=navItems().map(function(i){
-    return '<button class="navb" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
+    var head=i[2]!==last?'<div class="navgrp">'+i[2]+'</div>':'';last=i[2];
+    return head+'<button class="navb" data-action="nav" data-v="'+i[0]+'" aria-current="'+(ui.view===i[0]?'page':'false')+'">'+i[1]+'</button>';
   }).join('');
 }
 function renderUserBox(){
@@ -538,36 +543,107 @@ function viewResumen(){
   return '<section class="farm">'+sumHeader()+body+'</section>';
 }
 var periodName=function(){var p=ui.sum.period;return p==='today'?'ayer':p==='yesterday'?'el día anterior':p==='month'||p==='prevMonth'?'el período anterior':'el período anterior';};
-function sumGeneral(){
-  var D=ui.sum.data,admin=isAdmin();
-  if(!D)return '<div class="skeleton" aria-busy="true" aria-label="Cargando"><i></i><i></i><i></i></div>';
-  var K=D.kpis,C=D.change,vs=' vs. '+periodName();
-  var cards=card('Vendido',money(K.total),delta(C.total)+vs)+
+/* ---- Gráficos del tablero ---- */
+var CHART_COLORS=6;
+// Anillo (donut) con leyenda. items: [{label,value}]; el centro muestra el total.
+function donut(items,fmt,centerLabel){
+  var tot=items.reduce(function(n,x){return n+x.value;},0);
+  if(!(tot>0))return '<p class="empty">Sin datos en este período.</p>';
+  var pos=0,segs=items.map(function(x,i){
+    var p=x.value/tot*100,c='<circle class="dn dn'+(i%CHART_COLORS)+'" cx="21" cy="21" r="15.9155" fill="none" stroke-width="5.5" stroke-dasharray="'+p.toFixed(3)+' '+(100-p).toFixed(3)+'" stroke-dashoffset="'+(25-pos).toFixed(3)+'"><title>'+esc(x.label)+': '+fmt(x.value)+' ('+pct(p)+')</title></circle>';
+    pos+=p;return c;
+  }).join('');
+  return '<div class="donutbox"><svg class="donut" viewBox="0 0 42 42" role="img" aria-label="'+esc(centerLabel)+'"><circle cx="21" cy="21" r="15.9155" fill="none" class="dn-bg" stroke-width="5.5"></circle>'+segs+
+    '<text x="21" y="20.2" text-anchor="middle" class="dn-n">'+esc(fmt(tot))+'</text><text x="21" y="25" text-anchor="middle" class="dn-l">'+esc(centerLabel)+'</text></svg>'+
+    '<ul class="dnlist">'+items.map(function(x,i){return '<li><i class="sw sw'+(i%CHART_COLORS)+'"></i><span>'+esc(x.label)+'</span><b>'+pct(x.value/tot*100)+'</b></li>';}).join('')+'</ul></div>';
+}
+// Línea con área sombreada (evolución de lo vendido y, para el dueño, de la ganancia).
+function areaChart(points,gran,showProfit){
+  var W=620,H=200,L=8,R=8,T=12,B=26,n=points.length,max=Math.max.apply(null,points.map(function(p){return p.total;}).concat([1]));
+  var x=function(i){return n<2?W/2:L+i/(n-1)*(W-L-R);},y=function(v){return T+(1-v/max)*(H-T-B);};
+  var line=function(f){return points.map(function(p,i){return x(i).toFixed(1)+','+y(Math.max(0,f(p))).toFixed(1);}).join(' ');};
+  var step=Math.ceil(n/8),grid=[0,.5,1].map(function(g){var yy=y(max*g);return '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy.toFixed(1)+'" y2="'+yy.toFixed(1)+'" class="grid"></line>'+(g?'<text x="'+L+'" y="'+(yy-3).toFixed(1)+'">'+money(max*g)+'</text>':'');}).join('');
+  var labels=points.map(function(p,i){return i%step===0?'<text x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle">'+keyLabel(p.key,gran)+'</text>':'';}).join('');
+  var dots=points.map(function(p,i){return '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(p.total).toFixed(1)+'" r="'+(n>40?1.5:3)+'" class="pt"><title>'+keyLabel(p.key,gran)+': vendido '+money(p.total)+(showProfit?' · ganancia '+money(p.profit):'')+' · '+plural(p.count,'venta','ventas')+'</title></circle>';}).join('');
+  return '<div class="chartwrap"><svg class="chart areachart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución de ventas">'+grid+
+    '<polygon class="area" points="'+x(0).toFixed(1)+','+y(0).toFixed(1)+' '+line(function(p){return p.total;})+' '+x(n-1).toFixed(1)+','+y(0).toFixed(1)+'"></polygon>'+
+    '<polyline class="l-cur" fill="none" points="'+line(function(p){return p.total;})+'"></polyline>'+
+    (showProfit?'<polyline class="l-profit" fill="none" points="'+line(function(p){return p.profit;})+'"></polyline>':'')+dots+labels+'</svg></div>'+
+    '<div class="legend"><span><i class="l-cur"></i>Vendido</span>'+(showProfit?'<span><i class="l-profit"></i>Ganancia</span>':'')+'</div>'+
+    srTable('Ventas por '+(gran==='month'?'mes':'día'),['Período','Vendido'].concat(showProfit?['Ganancia']:[]).concat(['Ventas']),points.map(function(p){return [keyLabel(p.key,gran),money(p.total)].concat(showProfit?[money(p.profit)]:[]).concat([String(p.count)]);}));
+}
+// Barras horizontales ordenadas (ranking).
+function rankBars(rows,fmt){
+  if(!rows.length)return '<p class="empty">Sin datos en este período.</p>';
+  var max=Math.max.apply(null,rows.map(function(r){return r.value;}).concat([1]));
+  return '<ul class="rank">'+rows.map(function(r,i){return '<li><span class="rk">'+(i+1)+'</span><span class="rn" title="'+esc(r.label)+'">'+esc(r.label)+'</span><span class="bars"><span class="bar" style="width:'+Math.max(2,r.value/max*100)+'%"></span></span><b>'+fmt(r.value)+'</b></li>';}).join('')+'</ul>';
+}
+function kpiCards(D){
+  var admin=isAdmin(),K=D.kpis,C=D.change,vs=' vs. '+periodName();
+  return '<div class="cards kpis">'+card('Vendido',money(K.total),delta(C.total)+vs)+
     (admin?card('Ganancia',money(K.profit),(K.margin==null?'':'Margen '+pct(K.margin)+' · ')+delta(C.profit)):'')+
     card('Ticket promedio',money(K.avg),delta(C.avg))+
     card('N° de ventas',String(K.count),delta(C.count))+
     (admin?card('Efectivo en caja',money(D.drawer),'Hoy',D.drawer<0?'neg':''):'')+
     (admin?card('Gastos y compras',money(K.expenses),delta(C.expenses,false)):'')+
-    (D.days>=7?card('Clientes nuevos',String(K.newClients),delta(C.newClients)):'');
-  var hasSales=D.series.some(function(p){return p.total>0;});
-  var chart=hasSales?barChart(D.series,D.granularity,admin)+'<div class="legend"><span><i class="b-total"></i>Vendido</span>'+(admin?'<span><i class="b-profit"></i>Ganancia</span>':'')+'</div>':emptyState('Todavía no hay ventas en este período.','nav','Ir a vender').replace('data-action="nav"','data-action="nav" data-v="vender"');
-  var topList=ui.sum.topBy==='profit'&&admin?D.topByProfit:D.topByUnits;
-  var top=topList.length?'<table class="tbl slim"><thead><tr><th>Producto</th><th class="num">Unidades</th><th class="num">Cobrado</th>'+(admin?'<th class="num">Ganancia</th>':'')+'</tr></thead><tbody>'+topList.map(function(x){
+    (D.days>=7?card('Clientes nuevos',String(K.newClients),delta(C.newClients)):'')+'</div>';
+}
+var noSales=function(){return '<p class="empty">Todavía no hay ventas en este período.</p>';};
+function sumSubs(){
+  var a=[['panorama','Panorama'],['evolucion','Evolución'],['masvendidos','Más vendidos'],['pagos','Medios de pago']];
+  if(isAdmin())a.push(['comparacion','Comparación']);
+  a.push(['horarios','Horarios']);
+  return a;
+}
+function sumGeneral(){
+  var D=ui.sum.data;
+  if(!D)return '<div class="skeleton" aria-busy="true" aria-label="Cargando"><i></i><i></i><i></i></div>';
+  var subs=sumSubs(),sub=subs.some(function(x){return x[0]===ui.sum.sub;})?ui.sum.sub:'panorama';
+  var nav='<div class="subnav" role="group" aria-label="Pantallas del resumen">'+subs.map(function(x){return '<button class="subtab" data-action="sum-sub" data-v="'+x[0]+'" aria-pressed="'+(x[0]===sub)+'">'+x[1]+'</button>';}).join('')+'</div>';
+  var body=sub==='evolucion'?sumEvolucion(D):sub==='masvendidos'?sumMasVendidos(D):sub==='pagos'?sumPagos(D):sub==='comparacion'&&isAdmin()?comparePanel():sub==='horarios'?hoursPanel():sumPanorama(D);
+  return nav+body;
+}
+// Panorama: el tablero con lo más importante en una sola mirada.
+function sumPanorama(D){
+  var admin=isAdmin(),hasSales=D.series.some(function(p){return p.total>0;});
+  var payItems=D.payments.map(function(p){return {label:p.method,value:p.total};});
+  var catItems=D.categories.slice(0,6).map(function(c){return {label:c.category,value:c.share};});
+  var topList=(admin?D.topByProfit:D.topByUnits).slice(0,5);
+  var top=rankBars(topList.map(function(x){return {label:x.name,value:admin?x.profit:x.qty};}),admin?money:function(v){return String(r3(v)).replace('.',',');});
+  var low=S.products.filter(lowStock).length,exp=S.products.filter(expiring).length;
+  var health='<ul class="stats">'+
+    '<li><span>Productos con poco stock</span><b class="'+(low?'neg':'')+'">'+low+'</b></li>'+
+    '<li><span>Vencidos o por vencer</span><b class="'+(exp?'neg':'')+'">'+exp+'</b></li>'+
+    '<li><span>Turnos de hoy</span><b>'+D.alerts.apptsToday+'</b></li>'+
+    '<li><span>Turnos pendientes</span><b>'+D.alerts.apptsPending+'</b></li>'+
+    (admin?'<li><span>Efectivo en caja</span><b class="'+(D.drawer<0?'neg':'')+'">'+money(D.drawer)+'</b></li>':'')+'</ul>';
+  return kpiCards(D)+'<div class="dash">'+
+    '<section class="panel span8"><h2 class="h3">Evolución de ventas</h2>'+(hasSales?areaChart(D.series,D.granularity,admin):noSales())+'</section>'+
+    '<section class="panel span4"><h2 class="h3">Medios de pago</h2>'+donut(payItems,money,'cobrado')+'</section>'+
+    '<section class="panel span4"><h2 class="h3">Ventas por categoría</h2>'+donut(catItems,function(v){return pct(v);},'categorías')+'</section>'+
+    '<section class="panel span4"><h2 class="h3">'+(admin?'Productos que más ganancia dejan':'Productos más vendidos')+'</h2>'+top+'</section>'+
+    '<section class="panel span4"><h2 class="h3">Estado del negocio</h2>'+health+'</section>'+
+    '<div class="span12">'+alertsPanel(D)+'</div></div>';
+}
+function sumEvolucion(D){
+  var admin=isAdmin(),hasSales=D.series.some(function(p){return p.total>0;});
+  return '<section class="panel"><h2 class="h3">Ventas por '+(D.granularity==='month'?'mes':'día')+'</h2>'+(hasSales?barChart(D.series,D.granularity,admin)+'<div class="legend"><span><i class="b-total"></i>Vendido</span>'+(admin?'<span><i class="b-profit"></i>Ganancia</span>':'')+'</div>':noSales())+'</section>'+(admin?monthlyPanel():'');
+}
+function sumMasVendidos(D){
+  var admin=isAdmin(),topList=ui.sum.topBy==='profit'&&admin?D.topByProfit:D.topByUnits;
+  var top=topList.length?'<div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Producto</th><th class="num">Unidades</th><th class="num">Cobrado</th>'+(admin?'<th class="num">Ganancia</th>':'')+'</tr></thead><tbody>'+topList.map(function(x){
     return '<tr><td>'+esc(x.name)+'</td><td class="num">'+fmtQty(x.qty,x.unit)+'</td><td class="num">'+money(x.total)+'</td>'+(admin?'<td class="num">'+money(x.profit)+'</td>':'')+'</tr>';
-  }).join('')+'</tbody></table>':'<p class="empty">Sin ventas de productos en este período.</p>';
+  }).join('')+'</tbody></table></div>':'<p class="empty">Sin ventas de productos en este período.</p>';
   var cats=D.categories.length?'<ul class="barlist">'+D.categories.map(function(c){return '<li><span>'+esc(c.category)+'</span><span class="bars"><span class="bar" style="width:'+Math.max(2,c.share)+'%"></span></span><b>'+pct(c.share)+'</b></li>';}).join('')+'</ul>':'<p class="empty">Sin ventas en este período.</p>';
-  var payTotal=D.payments.reduce(function(n,p){return n+p.total;},0);
-  var pays=payTotal?'<div class="stack" role="img" aria-label="Medios de pago">'+D.payments.map(function(p,i){return '<span class="seg'+i%4+'" style="width:'+(p.total/payTotal*100)+'%" title="'+esc(p.method)+': '+money(p.total)+'"></span>';}).join('')+'</div>'+
-    '<ul class="paylist">'+D.payments.map(function(p,i){return '<li><i class="seg'+i%4+'"></i>'+esc(p.method)+' <b>'+money(p.total)+'</b> <small>('+pct(p.total/payTotal*100)+')</small></li>';}).join('')+'</ul>':'<p class="empty">Sin cobros en este período.</p>';
-  return '<div class="sumgrid"><div class="sumain">'+
-    '<div class="cards">'+cards+'</div>'+
-    '<section class="panel"><h2 class="h3">Evolución de ventas</h2>'+chart+'</section>'+
-    (admin?monthlyPanel():'')+
-    '<div class="grid2"><section class="panel"><div class="sec-head"><h2 class="h3">Lo más vendido</h2>'+(admin?segHTML('sum-topby',[['units','Por unidades'],['profit','Por ganancia']],ui.sum.topBy,'Ordenar'):'')+'</div>'+top+'</section>'+
-    '<section class="panel"><h2 class="h3">Ventas por categoría</h2>'+cats+'</section></div>'+
-    '<section class="panel"><h2 class="h3">Medios de pago</h2>'+pays+'</section>'+
-    (admin?comparePanel():'')+hoursPanel()+
-    '</div><aside class="sumside">'+alertsPanel(D)+'</aside></div>';
+  return '<div class="grid2"><section class="panel"><div class="sec-head"><h2 class="h3">Lo más vendido</h2>'+(admin?segHTML('sum-topby',[['units','Por unidades'],['profit','Por ganancia']],ui.sum.topBy,'Ordenar'):'')+'</div>'+top+'</section>'+
+    '<section class="panel"><h2 class="h3">Ventas por categoría</h2>'+cats+'</section></div>';
+}
+function sumPagos(D){
+  var tot=D.payments.reduce(function(n,p){return n+p.total;},0);
+  if(!tot)return '<section class="panel"><h2 class="h3">Medios de pago</h2><p class="empty">Sin cobros en este período.</p></section>';
+  var rows=D.payments.map(function(p,i){return '<tr><td><i class="sw sw'+(i%CHART_COLORS)+'"></i> '+esc(p.method)+'</td><td class="num">'+money(p.total)+'</td><td class="num">'+pct(p.total/tot*100)+'</td></tr>';}).join('');
+  return '<div class="grid2"><section class="panel"><h2 class="h3">Cómo te pagan</h2>'+donut(D.payments.map(function(p){return {label:p.method,value:p.total};}),money,'cobrado')+'</section>'+
+    '<section class="panel"><h2 class="h3">Detalle</h2><div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Medio</th><th class="num">Cobrado</th><th class="num">%</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td><b>Total</b></td><td class="num"><b>'+money(tot)+'</b></td><td></td></tr></tfoot></table></div></section></div>';
 }
 function monthlyPanel(){
   var M=ui.sum.monthly;if(!M)return '';
@@ -617,7 +693,7 @@ function alertsPanel(D){
   if(D.alerts.apptsToday)items.push('<li><b>'+plural(D.alerts.apptsToday,'turno hoy','turnos hoy')+'</b><small>'+plural(D.alerts.apptsPending,'pendiente','pendientes')+'</small><button class="btn" data-action="goto-agenda-today">Ir a la agenda</button></li>');
   if(isAdmin()&&D.alerts.cashNotClosed)items.push('<li class="alert-w"><b>Caja sin cerrar</b><small>Hubo movimientos hoy y todavía no contaste la caja.</small><button class="btn" data-action="nav" data-v="caja">Cerrar caja</button></li>');
   if(isAdmin()){var d=lastExportDays();if(d===null||d>7)items.push('<li class="alert-w"><b>Copia de seguridad</b><small>'+(d===null?'Todavía no descargaste una copia.':'Hace '+plural(d,'día','días')+' que no descargás una copia.')+'</small><button class="btn" data-action="nav" data-v="copias">Descargar</button></li>');}
-  return '<section class="panel alerts-panel"><h2 class="h3">Avisos</h2>'+(items.length?'<ul class="alist">'+items.join('')+'</ul>':'<p class="empty">Todo en orden. 🎉</p>')+'</section>';
+  return '<section class="panel alerts-panel"><h2 class="h3">Avisos</h2>'+(items.length?'<ul class="alist">'+items.join('')+'</ul>':'<p class="empty">Todo en orden.</p>')+'</section>';
 }
 var thSort=function(key,label,num){var s=ui.sum.psort||{k:'profit',d:-1};return '<th class="'+(num?'num':'')+'" aria-sort="'+(s.k===key?(s.d>0?'ascending':'descending'):'none')+'"><button class="thbtn" data-action="sum-psort" data-v="'+key+'">'+label+(s.k===key?(s.d>0?' ▲':' ▼'):'')+'</button></th>';};
 function sumProductos(){
@@ -630,7 +706,7 @@ function sumProductos(){
   }).join('');
   return '<section class="panel"><div class="toolbar"><h2 class="h3" style="margin:0">Rentabilidad</h2>'+segHTML('sum-pgroup',[['product','Por producto'],['brand','Por marca'],['category','Por categoría']],P.group,'Agrupar')+
     '<span class="grow"></span><button class="btn" data-action="sum-export" data-v="products">Exportar CSV</button></div>'+
-    '<p class="note2">En rojo: margen negativo o menor a '+pct(P.lowMargin)+' (lo cambiás en Configuración). “Top 10” = los que más ganancia dejan, que no siempre son los más vendidos.</p>'+
+    '<p class="note2">En rojo: margen negativo o menor a '+pct(P.lowMargin)+'. “Top 10” = los que más ganancia dejan, que no siempre son los más vendidos.</p>'+
     (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr>'+thSort('name',P.group==='product'?'Producto':P.group==='brand'?'Marca':'Categoría')+thSort('qty','Unidades',1)+thSort('total','Ingresos',1)+thSort('cost','Costo',1)+thSort('profit','Ganancia',1)+thSort('margin','Margen',1)+thSort('share','% de la ganancia',1)+'</tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">Todavía no hay ventas de productos en este período.</p>')+'</section>';
 }
 var waLink=function(phone){var d=String(phone||'').replace(/\D/g,'');if(!d)return '';if(d.length===10)d='549'+d;else if(d.indexOf('54')!==0)d='54'+d;return 'https://wa.me/'+d;};
@@ -651,13 +727,13 @@ function sumClientes(){
 function sumPersonal(){
   var P=ui.sum.staff;
   if(!P)return '<div class="skeleton" aria-busy="true"><i></i><i></i></div>';
-  if(!P.items.length)return '<section class="panel"><p class="empty">No hay turnos en este período. Cargá quién atiende en cada turno (campo «Atiende») para ver el rendimiento de cada peluquero.</p></section>';
+  if(!P.items.length)return '<section class="panel"><p class="empty">No hay turnos en este período. Asigná personal en cada turno para ver el rendimiento de cada persona.</p></section>';
   var named=P.items.some(function(x){return x.staff!=='Sin asignar';});
-  return '<section class="panel"><h2 class="h3">Rendimiento de la peluquería</h2>'+(named?'':'<p class="note2">Todavía no hay peluqueros cargados en los turnos: se muestra el total del local.</p>')+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Atiende</th><th class="num">Turnos</th><th class="num">Realizados</th><th class="num">Ingresos por servicios</th><th class="num">Duración real / estimada</th><th class="num">No vino</th><th class="num">Cancelados</th><th>Servicio más pedido</th></tr></thead><tbody>'+P.items.map(function(x){
+  return '<section class="panel"><h2 class="h3">Rendimiento del personal</h2>'+(named?'':'<p class="note2">Todavía no hay personal asignado en los turnos: se muestra el total del local.</p>')+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Personal</th><th class="num">Turnos</th><th class="num">Realizados</th><th class="num">Ingresos por servicios</th><th class="num">Duración real / estimada</th><th class="num">No vino</th><th class="num">Cancelados</th><th>Servicio más pedido</th></tr></thead><tbody>'+P.items.map(function(x){
       var dur=x.realMinutes!=null?x.realMinutes+' / '+(x.estMinutes||'—')+' min':(x.estMinutes?'— / '+x.estMinutes+' min':'—');
       return '<tr><td><b>'+esc(x.staff)+'</b></td><td class="num">'+x.total+'</td><td class="num">'+x.done+'</td><td class="num">'+money(x.revenue)+'</td><td class="num">'+dur+'</td><td class="num'+(x.noShowPct>15?' negtxt':'')+'">'+pct(x.noShowPct)+'</td><td class="num">'+pct(x.cancelPct)+'</td><td>'+esc(x.topService||'—')+'</td></tr>';
-    }).join('')+'</tbody></table></div><p class="note2">La duración real se mide desde que el turno pasa a «En curso» hasta «Listo para retirar».</p></section>';
+    }).join('')+'</tbody></table></div><p class="note2">La duración real se mide desde que el turno se confirma hasta que queda «Listo para retirar».</p></section>';
 }
 function sumProyeccion(){
   var P=ui.sum.proj;
@@ -667,14 +743,14 @@ function sumProyeccion(){
     '<p>Gastos fijos del mes: <b>'+money(b.fixedCosts)+'</b> <small>('+esc((b.fixedCategories||[]).join(', ')||'ninguna categoría marcada')+')</small> · Margen bruto promedio: <b>'+pct(b.margin)+'</b></p>'+
     '<p class="big">Necesitás vender '+money(b.need)+' para no perder</p>'+
     '<div class="meter'+(b.progress>=100?'':' warnm')+'" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(b.progress)+'"><i style="width:'+Math.max(1,b.progress)+'%"></i></div>'+
-    '<p>Vendiste <b>'+money(P.sales)+'</b> de <b>'+money(b.need)+'</b> necesarios ('+pct(b.progress)+'). '+(b.progress>=100?'¡Ya cubriste los gastos fijos del mes! 🎉':b.reachDate?'Al ritmo actual lo alcanzás el '+fmtDate(b.reachDate)+'.':'Al ritmo actual no se alcanza este mes.')+'</p>';
+    '<p>Vendiste <b>'+money(P.sales)+'</b> de <b>'+money(b.need)+'</b> necesarios ('+pct(b.progress)+'). '+(b.progress>=100?'¡Ya cubriste los gastos fijos del mes! ':b.reachDate?'Al ritmo actual lo alcanzás el '+fmtDate(b.reachDate)+'.':'Al ritmo actual no se alcanza este mes.')+'</p>';
   return '<section class="panel"><h2 class="h3">Proyección de '+mes+'</h2><p class="note2">Es una estimación: combina el ritmo de este mes (día '+P.day+' de '+P.daysInMonth+') con el promedio de '+(P.avgMonths?'los últimos '+plural(P.avgMonths,'mes','meses'):'— todavía no hay meses anteriores —')+'.</p>'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="num">Prudente</th><th class="num">Esperado</th><th class="num">Optimista</th></tr></thead><tbody>'+
     '<tr><td>Ventas a fin de mes</td><td class="num">'+money(p.sales.prudent)+'</td><td class="num"><b>'+money(p.sales.expected)+'</b></td><td class="num">'+money(p.sales.optimistic)+'</td></tr>'+
     '<tr><td>Egresos a fin de mes</td><td class="num">'+money(p.expenses.prudent)+'</td><td class="num"><b>'+money(p.expenses.expected)+'</b></td><td class="num">'+money(p.expenses.optimistic)+'</td></tr>'+
     '<tr><td><b>Saldo de caja del mes</b></td><td class="num '+(P.result.prudent>=0?'in':'out')+'">'+money(P.result.prudent)+'</td><td class="num '+(P.result.expected>=0?'in':'out')+'"><b>'+money(P.result.expected)+'</b></td><td class="num '+(P.result.optimistic>=0?'in':'out')+'">'+money(P.result.optimistic)+'</td></tr>'+
     '</tbody></table></div><p class="note2">Hasta hoy: vendiste '+money(P.sales)+' y gastaste '+money(P.expenses)+'.</p></section>'+
-    '<section class="panel"><h2 class="h3">Punto de equilibrio</h2>'+be+'<p class="note2">Las categorías de gastos fijos se eligen en Configuración.</p></section>';
+    '<section class="panel"><h2 class="h3">Punto de equilibrio</h2>'+be+'</section>';
 }
 
 /* ============================================================
@@ -716,10 +792,10 @@ function posResults(){
   var prods=S.products.filter(function(x){return !q||norm(x.name+' '+x.brand+' '+x.category+' '+(x.barcodes||[]).join(' ')).indexOf(q)>=0;});
   var servs=S.services.filter(function(x){return !q||norm(x.name+' '+x.category).indexOf(q)>=0;});
   var h=servs.slice(0,12).map(function(s){
-    return '<li><button class="pitem" data-action="cart-add" data-type="service" data-id="'+s.id+'"><span class="avatar" aria-hidden="true">✂️</span><span class="pi-main"><b>'+esc(s.name)+'</b><small>Servicio · '+esc(s.category)+'</small></span><b>'+money(s.price)+'</b></button></li>';
+    return '<li><button class="pitem" data-action="cart-add" data-type="service" data-id="'+s.id+'"><span class="avatar" aria-hidden="true">'+ini(s.name)+'</span><span class="pi-main"><b>'+esc(s.name)+'</b><small>Servicio · '+esc(s.category)+'</small></span><b>'+money(s.price)+'</b></button></li>';
   }).join('')+prods.slice(0,40).map(function(x){
     var st=x.stock<=0?'<span class="chip bad">Sin stock</span>':expired(x)?'<span class="chip bad">Vencido</span>':'<small>'+fmtQty(x.stock,x.unit)+' en stock</small>';
-    return '<li><button class="pitem" data-action="cart-add" data-type="product" data-id="'+x.id+'"'+(x.stock<=0?' disabled':'')+'><span class="avatar" aria-hidden="true">'+(x.unit==='kg'?'⚖️':'📦')+'</span>'+
+    return '<li><button class="pitem" data-action="cart-add" data-type="product" data-id="'+x.id+'"'+(x.stock<=0?' disabled':'')+'><span class="avatar" aria-hidden="true">'+ini(x.name)+'</span>'+
       '<span class="pi-main"><b class="clamp2" title="'+esc(prodLabel(x))+'">'+esc(x.name)+'</b><small>'+esc([x.brand,x.category].filter(Boolean).join(' · '))+'</small></span><span class="pi-end"><b>'+money(x.price)+(x.unit==='kg'?'/kg':'')+'</b>'+st+'</span></button></li>';
   }).join('');
   if(!h)h='<li class="empty">'+(S.products.length||S.services.length?'No hay nada con esa búsqueda.':'Todavía no hay productos ni servicios cargados.')+'</li>';
@@ -764,7 +840,7 @@ function cartHTML(){
     '<div class="actions cartacts"><button class="btn ghost" data-action="cart-clear"'+(c.items.length||c.clientId?'':' disabled')+'>Vaciar</button><button class="btn primary big-btn" data-action="cart-pay"'+(c.items.length?'':' disabled')+'>Cobrar '+money(t.total)+' <kbd>F4</kbd></button></div></div>';
 }
 function viewVender(){
-  return '<section class="farm"><div class="head"><h1>Vender</h1><div class="hbtns"><button class="btn" data-action="scan-toggle" aria-pressed="'+ui.scanStrip+'">📷 '+(ui.scanStrip?'Cerrar escáner':'Escanear con la cámara')+'</button></div></div>'+
+  return '<section class="farm"><div class="head"><h1>Vender</h1><div class="hbtns"><button class="btn" data-action="scan-toggle" aria-pressed="'+ui.scanStrip+'">'+(ui.scanStrip?'Cerrar escáner':'Escanear con la cámara')+'</button></div></div>'+
     '<p class="shortcuts"><kbd>F2</kbd> buscar · <kbd>Enter</kbd> agrega el primer resultado · <kbd>F4</kbd> cobrar · <kbd>Esc</kbd> vaciar la venta</p>'+
     '<div class="pos"><div class="pos-search">'+(ui.scanStrip?'<div id="scanstrip" class="scanstrip"></div>':'')+
     '<input id="posq" type="search" placeholder="'+(window.innerWidth<600?'Buscar o escanear un producto':'Buscar producto o servicio (o escaneá el código)')+'" value="'+esc(ui.posq)+'" aria-label="Buscar producto o servicio" autocomplete="off">'+
@@ -793,7 +869,7 @@ async function payCart(){
 }
 function saleDoneDialog(id,number,total,loss){
   infoDialog('Venta N° '+number+' registrada','<p class="big">'+money(total)+'</p><p>Se descontó el stock y se registró el ingreso en la caja.</p>'+(loss&&loss.length?'<p class="warnbox">Ojo: se vendió con pérdida '+esc(loss.join(', '))+'.</p>':''),[
-    {label:'🖨 Imprimir ticket',fn:function(){return printSale(id);}},
+    {label:'Imprimir ticket',fn:function(){return printSale(id);}},
     {label:'Nueva venta',cls:'primary',fn:function(){dlg.close();if(ui.view!=='vender')go('vender');else setTimeout(focusSearch,50);}},
   ]);
 }
@@ -843,7 +919,7 @@ async function saleDetail(id){
   var rows=s.items.map(function(it){
     return '<tr><td>'+esc(it.name)+(it.priceReason?'<br><small>Precio cambiado (lista '+money(it.listPrice)+'): '+esc(it.priceReason)+'</small>':'')+'</td><td class="num">'+fmtQty(it.qty,it.unit)+'</td><td class="num">'+money(it.price)+'</td><td class="num">'+money(it.amount)+'</td>'+(admin?'<td class="num">'+money(r2(it.amount-it.qty*it.cost))+'</td>':'')+'</tr>';
   }).join('');
-  var btns=[{label:'🖨 Ticket',fn:function(){return printSale(id);}}];
+  var btns=[{label:'Ticket',fn:function(){return printSale(id);}}];
   if(admin&&!s.voided)btns.push({label:'Anular venta',cls:'danger-o',fn:function(){voidSale(id,s.number);}});
   infoDialog('Venta N° '+s.number,
     '<p>'+fmtDate(s.date)+' '+fmtTime(s.createdAt)+(s.seller?' · vendió '+esc(s.seller):'')+'</p>'+(s.client?'<p>Cliente: '+esc(s.client)+(s.pet?' ('+esc(s.pet)+')':'')+'</p>':'')+
@@ -886,7 +962,7 @@ function stockTable(){
     var costCells='';
     if(admin){
       var margin=x.cost>0&&x.price>0?(x.price-x.cost)/x.price*100:null,loss=x.cost>0&&x.price<x.cost;
-      costCells='<td class="num col2">'+(x.cost>0?money(x.cost)+per:'—')+'</td><td class="num col2'+(loss?' negtxt':'')+'">'+(margin==null?'—':(loss?'⚠ ':'')+pct(margin))+'</td><td class="num col2">'+(x.cost>0?money(Math.max(x.stock,0)*x.cost):'—')+'</td>';
+      costCells='<td class="num col2">'+(x.cost>0?money(x.cost)+per:'—')+'</td><td class="num col2'+(loss?' negtxt':'')+'">'+(margin==null?'—':(loss?'':'')+pct(margin))+'</td><td class="num col2">'+(x.cost>0?money(Math.max(x.stock,0)*x.cost):'—')+'</td>';
     }
     return '<tr class="'+(expired(x)?'expiredrow':'')+'"><td><b class="clamp2" title="'+esc(prodLabel(x))+'">'+esc(x.name)+'</b><small>'+esc([x.brand,x.category,x.species].filter(Boolean).join(' · '))+'</small>'+((x.barcodes||[]).length?'<small class="bc">▮ '+esc(x.barcodes.join(' · '))+'</small>':'')+'</td><td>'+stockCell+'</td><td class="num">'+fmtQty(x.min,x.unit)+'</td><td>'+chip+'</td><td class="num">'+money(x.price)+per+'</td>'+costCells+'<td class="act">'+acts+'</td></tr>';
   }).join('');
@@ -929,7 +1005,7 @@ function viewStock(){
       '<label class="inl"><span class="sr-only">Categoría</span><select id="stcat"><option value="all">Todas las categorías</option>'+PROD_CATS.map(function(c){return '<option'+(ui.cat===c?' selected':'')+'>'+c+'</option>';}).join('')+'</select></label></div>'+
     '<input id="stq" type="search" placeholder="Buscar por nombre, marca o código" value="'+esc(ui.stq)+'" aria-label="Buscar producto" class="searchbar">'+
     '<div id="stocktable">'+stockTable()+'</div>';
-  return '<section class="farm"><div class="head"><h1>Stock</h1><div class="hbtns"><button class="btn" data-action="scan-sell">📷 Vender con escáner</button><button class="btn" data-action="scan-stock">📷 Ingresar con escáner</button>'+
+  return '<section class="farm"><div class="head"><h1>Stock</h1><div class="hbtns"><button class="btn" data-action="scan-sell">Vender con escáner</button><button class="btn" data-action="scan-stock">Ingresar con escáner</button>'+
     (admin?'<button class="btn" data-action="bulk-price">% Actualizar precios</button><button class="btn primary" data-action="new-product">Nuevo producto</button>':'')+'</div></div>'+tabs+body+'</section>';
 }
 
@@ -980,9 +1056,9 @@ document.addEventListener('visibilitychange',function(){if(document.visibilitySt
  */
 function createScanner(box,o){
   box.innerHTML='<div class="scanbox"><video playsinline muted autoplay></video><div class="scanline" aria-hidden="true"></div></div>'+
-    '<div class="scanctl"><button type="button" class="btn" data-s="torch" hidden aria-pressed="false">🔦 Linterna</button><button type="button" class="btn" data-s="switch" hidden>🔄 Cambiar cámara</button>'+
-    '<label class="btn">🖼 Leer de una foto<input type="file" accept="image/*" capture="environment" hidden></label>'+
-    '<button type="button" class="btn" data-s="beep" aria-pressed="'+(store.get('petshop_beep')!=='off')+'">'+(store.get('petshop_beep')==='off'?'🔕 Sin sonido':'🔔 Con sonido')+'</button></div>'+
+    '<div class="scanctl"><button type="button" class="btn" data-s="torch" hidden aria-pressed="false">Linterna</button><button type="button" class="btn" data-s="switch" hidden>Cambiar cámara</button>'+
+    '<label class="btn">Leer de una foto<input type="file" accept="image/*" capture="environment" hidden></label>'+
+    '<button type="button" class="btn" data-s="beep" aria-pressed="'+(store.get('petshop_beep')!=='off')+'">'+(store.get('petshop_beep')==='off'?'Sin sonido':'Con sonido')+'</button></div>'+
     '<p class="scanmsg" role="status">Abriendo la cámara…</p>'+
     '<div class="scanmanual"><label class="fld"><span>¿No lo lee? Escribí el código</span><input type="text" inputmode="numeric" autocomplete="off" class="scanman" placeholder="Ej.: 7791234567890"></label><button type="button" class="btn primary" data-s="use">Usar</button></div>';
   var video=box.querySelector('video'),msg=box.querySelector('.scanmsg'),stream=null,track=null,timer=null,done=false,decode=null,devices=[],devIdx=0,last={code:'',at:0},torchOn=false;
@@ -1002,7 +1078,7 @@ function createScanner(box,o){
   }
   box.querySelector('[data-s="use"]').addEventListener('click',function(){var i=box.querySelector('.scanman');if(i.value.trim()){emit(i.value);i.value='';}else msg.textContent='Escribí el código y tocá «Usar».';});
   box.querySelector('.scanman').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();e.stopPropagation();box.querySelector('[data-s="use"]').click();}});
-  box.querySelector('[data-s="beep"]').addEventListener('click',function(e){var off=store.get('petshop_beep')!=='off';store.set('petshop_beep',off?'off':'on');e.currentTarget.textContent=off?'🔕 Sin sonido':'🔔 Con sonido';e.currentTarget.setAttribute('aria-pressed',String(!off));});
+  box.querySelector('[data-s="beep"]').addEventListener('click',function(e){var off=store.get('petshop_beep')!=='off';store.set('petshop_beep',off?'off':'on');e.currentTarget.textContent=off?'Sin sonido':'Con sonido';e.currentTarget.setAttribute('aria-pressed',String(!off));});
   box.querySelector('input[type=file]').addEventListener('change',async function(e){
     var f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
     msg.textContent='Leyendo la foto…';
@@ -1264,7 +1340,7 @@ function calDayGrid(){
   var blocks=act.map(function(a){
     var s=toMin(a.time),clash=act.some(function(b){return b!==a&&(b.petId===a.petId||(a.staff&&norm(b.staff)===norm(a.staff)))&&s<toMin(b.time)+b.duration&&toMin(b.time)<s+a.duration;});
     return '<button class="appt grid st-'+a.status+(clash?' clash':'')+'" data-action="appt-view" data-id="'+a.id+'" style="top:'+((s-open)/SLOT*PX)+'px;height:'+Math.max(PX*0.8,a.duration/SLOT*PX-3)+'px;left:calc('+(a._col/n*100)+'% + 2px);width:calc('+(100/n)+'% - 4px)">'+
-      (clash?'<b class="clashtag">⚠ Se pisa</b>':'')+apptLabel(a)+'<small>'+esc(a.service||'Sin servicio')+' · hasta '+a.endTime+(a.staff?' · '+esc(a.staff):'')+' · '+esc(APPT_LABEL[a.status])+'</small></button>';
+      (clash?'<b class="clashtag">Se pisa</b>':'')+apptLabel(a)+'<small>'+esc(a.service||'Sin servicio')+' · hasta '+a.endTime+(a.staff?' · '+esc(a.staff):'')+' · '+esc(APPT_LABEL[a.status])+'</small></button>';
   }).join('');
   var gone=list.filter(function(a){return !active(a);});
   return (h?'':'<p class="warnbox">Según el horario comercial, este día el local está cerrado.</p>')+
@@ -1278,8 +1354,8 @@ function viewAgenda(){
   if(ui.cal.view==='month')body=calMonthGrid();
   else if(ui.cal.view==='day')body=calDayGrid();
   else{var r=calRange(),cells='',d=r[0];while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}body='<div class="cal-week fit">'+cells+'</div>';}
-  return '<section class="farm"><div class="head"><h1>Agenda de peluquería</h1><button class="btn primary" data-action="new-appt">Nuevo turno</button></div>'+
-    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">Hoy</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
+  return '<section class="farm"><div class="head"><h1>Agenda de turnos</h1><button class="btn primary" data-action="new-appt">Nuevo turno</button></div>'+
+    '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">'+({day:'Hoy',week:'Semana',month:'Mes'}[ui.cal.view]||'Hoy')+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title" aria-live="polite">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view,'Vista')+'</div>'+
     '<div class="cal-legend">'+APPT_STATUS.map(function(s){return '<span><i class="st-'+s[0]+'"></i>'+s[1]+'</span>';}).join('')+'</div>'+body+'</section>';
 }
@@ -1287,7 +1363,8 @@ function viewAgenda(){
 /* ============================================================
    Clientes y mascotas
    ============================================================ */
-var petEmo=function(p){return p.species==='Gato'?'🐱':p.species==='Perro'?'🐶':'🐾';};
+var ini=function(n){return esc(String(n||'?').trim().charAt(0).toUpperCase()||'?');};
+var petEmo=function(p){return ini(p.name);};
 function ageText(b){
   if(!b)return '';
   var a=b.split('-').map(Number),now=new Date(),months=(now.getFullYear()-a[0])*12+(now.getMonth()+1-a[1]);
@@ -1306,7 +1383,7 @@ function clientListHTML(){
   if(!L.length)return '<li class="empty">'+(S.clients.length?'No hay clientes con esa búsqueda.':'Todavía no hay clientes. Empezá con «Nuevo cliente».')+'</li>';
   var shown=L.slice(0,ui.clLimit);
   return shown.map(function(c){
-    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">👤</span>'+
+    return '<li><button class="pitem" data-action="select-client" data-id="'+c.id+'" aria-current="'+(c.id===ui.csel)+'"><span class="avatar" aria-hidden="true">'+ini(c.name)+'</span>'+
       '<span class="pi-main"><b>'+esc(c.name)+'</b><small>'+(c.pets.length?c.pets.map(function(p){return esc(p.name);}).join(', '):'Sin mascotas')+(c.phone?' · '+esc(c.phone):'')+'</small></span></button></li>';
   }).join('')+(L.length>shown.length?'<li>'+moreBtn(shown.length,L.length,'clLimit')+'</li>':'');
 }
@@ -1314,8 +1391,8 @@ function clientDetailHTML(c){
   var tel=String(c.phone||'').replace(/[^\d+]/g,'');
   var contact=[c.phone?'Tel. <a href="tel:'+esc(tel)+'">'+esc(c.phone)+'</a>':'<span class="mut">Sin teléfono</span>',c.email?'<a href="mailto:'+esc(c.email)+'">'+esc(c.email)+'</a>':'<span class="mut">Sin email</span>'];
   var pets=c.pets.length?'<div class="petlist">'+c.pets.map(function(p){
-    var info=[p.species,p.breed,p.size,ageText(p.birth)].filter(Boolean).map(esc).join(' · ');
-    return '<div class="petrow"><span class="avatar" aria-hidden="true">'+petEmo(p)+'</span><span class="pi-main"><b>'+esc(p.name)+'</b><small>'+info+'</small>'+(p.notes?'<small class="pnote">✂️ '+esc(p.notes)+'</small>':'')+'</span>'+
+    var info=[p.species,p.breed,sizeLabel(p.size),ageText(p.birth)].filter(Boolean).map(esc).join(' · ');
+    return '<div class="petrow"><span class="avatar" aria-hidden="true">'+petEmo(p)+'</span><span class="pi-main"><b>'+esc(p.name)+'</b><small>'+info+'</small>'+(p.notes?'<small class="pnote">Notas: '+esc(p.notes)+'</small>':'')+'</span>'+
       '<span class="racts"><button class="link" data-action="pet-appt" data-id="'+p.id+'">Turno</button><button class="link" data-action="edit-pet" data-id="'+p.id+'">Editar</button>'+(isAdmin()?'<span class="sep"></span><button class="link bad" data-action="del-pet" data-id="'+p.id+'">Quitar</button>':'')+'</span></div>';
   }).join('')+'</div>':'<p class="empty">Todavía no tiene mascotas cargadas.</p>';
   var sales=c.sales.length?'<div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Fecha</th><th>Artículos</th><th>Pago</th><th class="num">Total</th><th><span class="sr-only">Acciones</span></th></tr></thead><tbody>'+c.sales.map(function(s){
@@ -1323,13 +1400,13 @@ function clientDetailHTML(c){
   }).join('')+'</tbody></table></div>':'<p class="empty">Todavía no tiene compras registradas a su nombre.</p>';
   var appts=c.appointments.length?'<ul class="plainlist">'+c.appointments.slice(0,15).map(function(a){return '<li>'+fmtDate(a.date)+' '+a.time+' · <b>'+esc(a.pet)+'</b> · '+esc(a.service||'Sin servicio')+(a.staff?' · '+esc(a.staff):'')+' <small>('+esc(APPT_LABEL[a.status])+')</small></li>';}).join('')+'</ul>':'<p class="empty">Sin turnos.</p>';
   return '<button class="btn back" data-action="back-client">← Volver a la lista</button>'+
-    '<header class="phead"><div class="avatar big" aria-hidden="true">👤</div><div class="info"><h2>'+esc(c.name)+'</h2><p class="meta">'+contact.join(' · ')+'</p>'+
-    (c.address?'<p class="meta">'+esc(c.address)+'</p>':'')+(c.notes?'<p class="meta">📝 '+esc(c.notes)+'</p>':'')+'</div>'+
+    '<header class="phead"><div class="avatar big" aria-hidden="true">'+ini(c.name)+'</div><div class="info"><h2>'+esc(c.name)+'</h2><p class="meta">'+contact.join(' · ')+'</p>'+
+    (c.address?'<p class="meta">'+esc(c.address)+'</p>':'')+(c.notes?'<p class="meta">Notas: '+esc(c.notes)+'</p>':'')+'</div>'+
     '<div class="pactions"><button class="btn primary" data-action="client-sell">Venderle</button><button class="btn" data-action="add-pet">Agregar mascota</button><button class="btn" data-action="edit-client">Editar datos</button>'+
     (c.phone?'<button class="btn" data-action="wa-client">WhatsApp</button>':'')+(isAdmin()?'<span class="sep"></span><button class="btn danger-o" data-action="del-client">Eliminar</button>':'')+'</div></header>'+
     '<div class="cards">'+card('Compró en total',money(c.totalSpent),plural(c.sales.filter(function(s){return !s.voided;}).length,'compra','compras'))+card('Última compra',c.lastPurchase?fmtDate(c.lastPurchase):'—',c.lastPurchase?'hace '+plural(-diffDays(c.lastPurchase),'día','días'):'')+'</div>'+
     '<section class="sec"><div class="sec-head"><h3>Mascotas ('+c.pets.length+')</h3></div>'+pets+'</section>'+
-    '<section class="sec"><div class="sec-head"><h3>Turnos de peluquería</h3></div>'+appts+'</section>'+
+    '<section class="sec"><div class="sec-head"><h3>Turnos</h3></div>'+appts+'</section>'+
     '<section class="sec"><div class="sec-head"><h3>Compras</h3></div>'+sales+'</section>';
 }
 function viewClientes(){
@@ -1455,41 +1532,16 @@ function auditHTML(){
     '<div class="toolbar">'+rangeHTML('afrom','ato',ui.afrom,ui.ato)+'<label class="inl">Usuario <select id="auser"><option value="">Todos</option>'+users+'</select></label><label class="inl">Acción <select id="aaction"><option value="">Todas</option>'+acts+'</select></label></div>'+
     (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Acción</th><th>Detalle</th><th>Motivo</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">No hay actividad con esos filtros.</p>');
 }
-function viewConfig(){
-  var s=S.settings;if(!s||!s.hours)return loadingView('Configuración');
-  var rep=s.report||{},log=ui.reportLog||{items:[]};
-  var hoursRows=[1,2,3,4,5,6,0].map(function(d){var h=s.hours[d];return '<tr><th scope="row">'+WEEKDAYS_LONG[d]+'</th><td><label class="fld check"><input type="checkbox" class="hopen" data-d="'+d+'"'+(h?' checked':'')+'><span>Abierto</span></label></td>'+
-    '<td><input type="time" class="hfrom" data-d="'+d+'" value="'+(h?h[0]:'09:00')+'" aria-label="Apertura del '+WEEKDAYS_LONG[d]+'"'+(h?'':' disabled')+'></td><td><input type="time" class="hto" data-d="'+d+'" value="'+(h?h[1]:'19:00')+'" aria-label="Cierre del '+WEEKDAYS_LONG[d]+'"'+(h?'':' disabled')+'></td></tr>';}).join('');
-  var logs=log.items.length?'<ul class="plainlist">'+log.items.map(function(x){return '<li>'+fmtTs(x.at)+' · '+(x.ok?'<span class="chip ok">Enviado</span>':'<span class="chip bad">Error</span>')+' '+esc(x.recipients)+(x.error?'<br><small class="negtxt">'+esc(x.error)+'</small>':'')+'</li>';}).join('')+'</ul>':'<p class="empty">Todavía no se envió ningún informe.</p>';
-  return '<section class="farm"><div class="head"><h1>Configuración</h1></div><form id="cfgform" class="cfg" novalidate>'+
-    '<section class="panel"><h2 class="h3">Negocio y ticket</h2><div class="fields">'+fld('Nombre del negocio','shopName',{value:s.shopName,req:true,full:true,maxlength:100})+
-      fld('Dirección','address',{value:s.address,maxlength:200})+fld('Teléfono','phone',{type:'tel',value:s.phone,pattern:PHONE_PAT,title:'Solo números, espacios, + , - y paréntesis (mínimo 6 dígitos)'})+
-      fld('Texto al pie del ticket','ticketText',{value:s.ticketText,full:true,maxlength:200})+fld('Ancho del ticket','ticketWidth',{opts:[['80','80 mm'],['58','58 mm']],value:s.ticketWidth})+'</div></section>'+
-    '<section class="panel"><h2 class="h3">Horario comercial</h2><p class="note2">Se usa en la Agenda: fuera de este horario se pide confirmación.</p><div class="tbl-wrap"><table class="tbl slim hours"><tbody>'+hoursRows+'</tbody></table></div></section>'+
-    '<section class="panel"><h2 class="h3">Medios de pago habilitados</h2><div class="checks">'+ALL_PAY.map(function(m){return '<label class="fld check"><input type="checkbox" name="m_'+esc(m)+'"'+((s.methods||[]).indexOf(m)>=0?' checked':'')+'><span>'+m+'</span></label>';}).join('')+'</div></section>'+
-    '<section class="panel"><h2 class="h3">Números del Resumen</h2><div class="fields">'+fld('Margen bajo (%)','lowMargin',{type:'number',min:0,max:100,step:'0.1',value:s.lowMargin,hint:'Los productos con margen menor se marcan en rojo.'})+
-      fld('Cliente perdido después de (días)','lostDays',{type:'number',min:7,max:365,step:'1',value:s.lostDays})+'</div>'+
-      '<p class="flabel">Gastos fijos (para el punto de equilibrio)</p><div class="checks">'+CASH_OUT_CATS.map(function(c){return '<label class="fld check"><input type="checkbox" name="fx_'+esc(c)+'"'+((s.fixedCategories||[]).indexOf(c)>=0?' checked':'')+'><span>'+c+'</span></label>';}).join('')+'</div></section>'+
-    '<section class="panel"><h2 class="h3">Informe semanal por email</h2>'+(s.emailReady?'':'<p class="warnbox">El envío de emails todavía no está configurado en el servidor. Cargá EMAIL_PROVIDER, EMAIL_API_KEY y EMAIL_FROM en Render (ver README). Mientras tanto, esta función queda desactivada.</p>')+
-      '<div class="fields">'+fld('Enviar el informe automáticamente','repEnabled',{type:'checkbox',value:rep.enabled,full:true})+
-      fld('Día','repWeekday',{opts:[1,2,3,4,5,6,0].map(function(d){return [String(d),WEEKDAYS_LONG[d]];}),value:String(rep.weekday)})+
-      fld('Desde la hora','repHour',{opts:Array.from({length:24},function(_,h){return [String(h),pad(h)+':00'];}),value:String(rep.hour)})+
-      fld('Destinatarios (separados por coma)','repTo',{value:rep.recipients,full:true,maxlength:500,ph:'dueno@gmail.com, socio@gmail.com'})+'</div>'+
-      '<div class="filerow"><button type="button" class="btn" data-action="report-preview">Ver cómo queda</button><button type="button" class="btn" data-action="report-send"'+(s.emailReady?'':' disabled')+'>Enviarme el informe ahora</button></div>'+
-      '<h3 class="h3">Envíos recientes</h3>'+logs+'</section>'+
-    '<p class="err" role="alert"></p><div class="actions"><button type="submit" class="btn primary">Guardar configuración</button></div></form></section>';
-}
-
 function render(){
   if(!S.user)return;
-  var adminOnly={caja:1,copias:1,usuarios:1,config:1};
+  var adminOnly={caja:1,copias:1,usuarios:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='vender';
   if(ui.view!=='vender'&&stripScanner){stripScanner.stop();stripScanner=null;}
   if(ui.view==='vender'&&stripScanner&&stripScanner.box.parentNode)stripScanner.box.parentNode.removeChild(stripScanner.box);
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='resumen'?viewResumen():v==='vender'?viewVender():v==='ventas'?viewVentas():v==='stock'?viewStock():v==='servicios'?viewServicios():
-    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():v==='config'?viewConfig():viewUsers();
+    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():viewUsers();
   labelTables();
   if(v==='vender')mountStrip();
 }
@@ -1534,9 +1586,7 @@ function productForm(x,preset,then){
       fld('Para','species',{opts:SPECIES_OPTS,value:x.species})+fld('Se vende','unit',{opts:UNIT_OPTS,value:x.unit})+
       fld('Precio de venta','price',{type:'number',min:0,step:'0.01',value:x.price,req:true,inputmode:'decimal'})+
       (admin?fld('Costo (lo que te cuesta)','cost',{type:'number',min:0,step:'0.01',value:x.cost||'',inputmode:'decimal'}):'')+
-      fld('Es un regalo/promoción (permite precio $ 0)','isGift',{type:'checkbox',value:x.isGift,full:true})+
       fld('Código de barras principal','barcode',{value:codes[0]||'',full:true,ph:'Escribilo, escanealo o pasalo con el lector',pattern:'[0-9A-Za-z._\\-\\s]{4,64}',title:'Entre 4 y 64 caracteres: letras, números, punto y guion',inputmode:'numeric'})+
-      fld('Otros códigos (opcional, separados por coma)','barcodes',{value:codes.slice(1).join(', '),full:true,ph:'Otras presentaciones del mismo producto',maxlength:600})+
       fld('Stock mínimo (para avisar)','min',{type:'number',min:0,step:qtyStep(x.unit),value:x.min,req:true})+
       fld('Vencimiento (opcional)','expires',{type:'date',value:x.expires})+
       fld('Proveedor habitual','supplierId',{opts:supplierOpts(),value:x.supplierId,full:true})+
@@ -1547,9 +1597,9 @@ function productForm(x,preset,then){
     '</div>'+(isNew?'':'<p>Para cambiar la cantidad usá el botón + (llegó mercadería) o «Ajustar stock».</p>'),
     submit:isNew?'Agregar producto':'Guardar cambios',
     onSubmit:async function(d){
-      if(!(Number(d.price)>0)&&!d.isGift)throw new Error('El precio de venta no puede ser $ 0. Si es un regalo o promoción, tildá «Es un regalo/promoción».');
+      if(!(Number(d.price)>0)&&!x.isGift)throw new Error('El precio de venta no puede ser $ 0.');
       var body={name:d.name,brand:d.brand,category:d.category,species:d.species,unit:d.unit,price:d.price,min:d.min,barcode:normCode(d.barcode),
-        barcodes:String(d.barcodes||'').split(/[,;]+/).map(function(c){return normCode(c);}).filter(Boolean),expires:d.expires,supplierId:d.supplierId||null,isGift:!!d.isGift,
+        barcodes:codes.slice(1),expires:d.expires,supplierId:d.supplierId||null,isGift:!!x.isGift,
         packKg:d.unit==='u'?d.packKg:'',looseId:d.unit==='u'&&d.looseId?Number(d.looseId):null};
       if(admin)body.cost=d.cost;
       if(d.expires&&diffDays(d.expires)<0){
@@ -1569,20 +1619,20 @@ function productForm(x,preset,then){
   unitSel.addEventListener('change',syncUnit);syncUnit();
   // Margen en vivo y aviso de pérdida (solo el dueño ve el costo).
   addPreview(pf,function(){
-    var p=Number(pf.querySelector('[name="price"]').value),co=pf.querySelector('[name="cost"]'),c=co?Number(co.value):0,gift=pf.querySelector('[name="isGift"]').checked,per=unitSel.value==='kg'?'kilo':'unidad';
-    if(!(p>0))return gift?'Regalo/promoción: se puede vender a $ 0.':{html:'⚠ El precio de venta no puede ser $ 0 (salvo regalo/promoción).',bad:true};
-    if(c>0&&p<c)return {html:'⚠ Con este precio perdés '+money(c-p)+' por '+per+' (margen '+pct((p-c)/p*100)+').',bad:true};
+    var p=Number(pf.querySelector('[name="price"]').value),co=pf.querySelector('[name="cost"]'),c=co?Number(co.value):0,gift=!!x.isGift,per=unitSel.value==='kg'?'kilo':'unidad';
+    if(!(p>0))return gift?'Regalo/promoción: se puede vender a $ 0.':{html:'El precio de venta no puede ser $ 0 (salvo regalo/promoción).',bad:true};
+    if(c>0&&p<c)return {html:'Con este precio perdés '+money(c-p)+' por '+per+' (margen '+pct((p-c)/p*100)+').',bad:true};
     if(c>0)return 'Ganás '+money(p-c)+' por '+per+' · margen '+pct((p-c)/p*100)+'.';
     return admin?'Cargá el costo para ver tu margen.':'';
   });
   var ex=pf.querySelector('[name="expires"]'),exHint=document.createElement('small');exHint.className='negtxt';ex.insertAdjacentElement('afterend',exHint);
-  var syncEx=function(){exHint.textContent=ex.value&&diffDays(ex.value)<0?'⚠ Este producto ya está vencido.':'';};ex.addEventListener('change',syncEx);syncEx();
+  var syncEx=function(){exHint.textContent=ex.value&&diffDays(ex.value)<0?'Este producto ya está vencido.':'';};ex.addEventListener('change',syncEx);syncEx();
   // El lector USB termina con Enter: en el campo del código no tiene que enviar el formulario.
   var bcIn=pf.querySelector('[name="barcode"]');
   bcIn.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();bcIn.value=normCode(bcIn.value);}});
   var row=document.createElement('div');row.className='withbtn';
   bcIn.parentNode.insertBefore(row,bcIn);row.appendChild(bcIn);
-  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='📷 Escanear';row.appendChild(sb);
+  var sb=document.createElement('button');sb.type='button';sb.className='btn';sb.textContent='Escanear';row.appendChild(sb);
   sb.addEventListener('click',async function(){
     var code=await openScanner('Escanear el código del producto');
     if(!code)return;
@@ -1590,7 +1640,7 @@ function productForm(x,preset,then){
     var other=prodByBarcode(code);
     if(other&&(isNew||other.id!==x.id)){pf.querySelector('.err').textContent='Ese código ya pertenece al producto «'+other.name+'».';return;}
     pf.querySelector('.err').textContent='';
-    if(!bcIn.value)bcIn.value=code;else{var o=pf.querySelector('[name="barcodes"]');o.value=o.value?o.value+', '+code:code;}
+    if(!bcIn.value)bcIn.value=code;else{codes.push(code);toast('Código agregado al producto.');}
   });
 }
 // Llegó mercadería. El empleado solo suma la cantidad (y el vencimiento); el costo y la caja son del dueño.
@@ -1711,9 +1761,9 @@ function serviceForm(s){
 }
 function petFields(p){
   p=p||{species:'Perro'};
-  return fld('Nombre de la mascota','pname',{value:p.name,maxlength:100})+fld('Especie','pspecies',{opts:PET_SPECIES,value:p.species})+fld('Tamaño','psize',{opts:PET_SIZES,value:p.size})+
+  return fld('Nombre de la mascota','pname',{value:p.name,maxlength:100})+fld('Especie','pspecies',{opts:PET_SPECIES,value:p.species})+fld('Tamaño','psize',{opts:PET_SIZES,value:p.size==='Gigante'?'Grande':(p.size||'Mediano')})+
     fld('Raza','pbreed',{value:p.breed,ph:'Ej.: Caniche',maxlength:100})+fld('Fecha de nacimiento (aprox.)','pbirth',{type:'date',value:p.birth,max:todayIso()})+
-    fld('Notas de peluquería','pnotes',{type:'textarea',value:p.notes,full:true,ph:'Ej.: corte a tijera, se pone nervioso con el secador'});
+    fld('Notas','pnotes',{type:'textarea',value:p.notes,full:true,ph:'Ej.: corte a tijera, se pone nervioso con el secador, alergia a un shampoo'});
 }
 var petBody=function(d){return {name:d.pname,species:d.pspecies,size:d.psize,breed:d.pbreed,birth:d.pbirth,notes:d.pnotes};};
 function clientForm(c){
@@ -1773,8 +1823,8 @@ function appointmentForm(a,presetDate,presetPet,presetTime){
   var f=openForm({title:isNew?'Nuevo turno':'Editar turno',
     body:'<div class="fields">'+fld('Mascota','petId',{opts:pets,value:a.petId,full:true,req:true})+fld('Servicio','serviceId',{opts:svOpts,value:a.serviceId,full:true})+
       fld('Fecha','date',{type:'date',value:a.date,req:true})+fld('Hora','time',{type:'time',value:a.time,req:true,step:'300'})+
-      fld('Duración (minutos)','duration',{type:'number',min:5,max:600,step:'5',value:a.duration,req:true})+fld('Estado','status',{opts:APPT_STATUS,value:a.status})+
-      fld('Atiende (peluquero, opcional)','staff',{value:a.staff,list:'stafflist',maxlength:60,ph:'Ej.: Ana'})+
+      fld('Duración (minutos)','duration',{type:'number',min:5,max:600,step:'5',value:a.duration,req:true})+fld('Estado','status',{opts:APPT_FORM_STATUS.concat(APPT_FORM_STATUS.some(function(x){return x[0]===a.status;})?[]:[[a.status,APPT_LABEL[a.status]||a.status]]),value:a.status})+
+      fld('Asignar personal (opcional)','staff',{value:a.staff,list:'stafflist',maxlength:60,ph:'Ej.: Ana'})+
       fld('Notas (opcional)','notes',{type:'textarea',value:a.notes,full:true,ph:'Ej.: lo trae a las 10 y lo retira a las 13'})+'</div>'+
       '<datalist id="stafflist">'+(ui.staffNames||[]).map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>',
     submit:isNew?'Agendar turno':'Guardar cambios',
@@ -1804,22 +1854,27 @@ function chargeAppt(a){
 }
 function appointmentDetails(a){
   var tel=String(a.phone||'').replace(/[^\d+]/g,'');
+  var open=a.status==='reservado'||a.status==='confirmado'||a.status==='en_curso';
   var btns=[];
-  if(a.status==='reservado')btns.push({label:'Empezar',fn:function(){return setApptStatus(a,'en_curso');}});
-  if(a.status==='reservado'||a.status==='en_curso')btns.push({label:'Listo para retirar',fn:function(){return setApptStatus(a,'listo');}});
-  if(!a.saleId&&a.status!=='cancelado'&&a.status!=='no_vino')btns.push({label:'Cobrar'+(a.servicePrice!=null?' '+money(a.servicePrice):''),cls:'primary',fn:function(){chargeAppt(a);}});
-  if(a.status==='reservado')btns.push({label:'No vino',fn:function(){return setApptStatus(a,'no_vino');}});
+  if(a.status==='reservado')btns.push({label:'Confirmar turno',cls:'primary',fn:function(){return setApptStatus(a,'confirmado');}});
+  if(open)btns.push({label:'Listo para retirar',fn:function(){return setApptStatus(a,'listo');}});
+  if(!a.saleId&&a.status!=='cancelado'&&a.status!=='no_vino')btns.push({label:'Cobrar'+(a.servicePrice!=null?' '+money(a.servicePrice):''),cls:a.status==='reservado'?'':'primary',fn:function(){chargeAppt(a);}});
+  if(open)btns.push({label:'No vino',fn:function(){return setApptStatus(a,'no_vino');}});
+  if(open)btns.push({label:'Cancelar turno',fn:function(){return setApptStatus(a,'cancelado');}});
   if(a.phone)btns.push({label:'WhatsApp',fn:function(){waDialog(a.client,a.phone,'Hola '+a.client.split(' ')[0]+', te escribimos de '+S.shop+' por el turno de '+a.pet+' del '+fmtDate(a.date)+' a las '+a.time+' hs.');}});
   btns.push({label:'Editar',fn:function(){dlg.close();appointmentForm(a);}});
   btns.push({label:'Eliminar',cls:'danger-o',fn:function(){
     confirmForm('Eliminar turno','Se elimina el turno de '+esc(a.pet)+' del '+fmtDate(a.date)+' a las '+a.time+'. No se puede deshacer.','Eliminar',async function(){await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Turno eliminado');});
   }});
   infoDialog(esc(a.pet)+' · '+a.time+' hs',
-    '<p><b>'+esc(a.service||'Sin servicio definido')+'</b>'+(a.servicePrice!=null?' · '+money(a.servicePrice):'')+'</p>'+
-    '<p>'+fmtDate(a.date)+' de '+a.time+' a '+a.endTime+' · <span class="chip st-'+a.status+'">'+esc(APPT_LABEL[a.status])+'</span>'+(a.saleId?' <span class="chip ok">Cobrado</span>':'')+'</p>'+
-    (a.staff?'<p><b>Atiende:</b> '+esc(a.staff)+'</p>':'')+
-    '<p><b>Mascota:</b> '+esc([a.species,a.breed,a.size].filter(Boolean).join(' · '))+'</p>'+(a.petNotes?'<p class="warnbox">✂️ '+esc(a.petNotes)+'</p>':'')+
-    '<p><b>Dueño:</b> '+esc(a.client)+(a.phone?' · <a href="tel:'+esc(tel)+'">'+esc(a.phone)+'</a>':'')+'</p>'+(a.notes?'<p><b>Notas:</b> '+esc(a.notes)+'</p>':''),btns);
+    '<div class="apptinfo"><div class="apptrow"><span>Servicio</span><b>'+esc(a.service||'Sin servicio definido')+(a.servicePrice!=null?' · '+money(a.servicePrice):'')+'</b></div>'+
+    '<div class="apptrow"><span>Fecha y hora</span><b>'+fmtDate(a.date)+' de '+a.time+' a '+a.endTime+'</b></div>'+
+    '<div class="apptrow"><span>Estado</span><span><span class="chip st-'+a.status+'">'+esc(APPT_LABEL[a.status])+'</span>'+(a.saleId?' <span class="chip ok">Cobrado</span>':'')+'</span></div>'+
+    (a.staff?'<div class="apptrow"><span>Personal</span><b>'+esc(a.staff)+'</b></div>':'')+
+    '<div class="apptrow"><span>Mascota</span><b>'+esc([a.species,a.breed,sizeLabel(a.size)].filter(Boolean).join(' · '))+'</b></div>'+
+    '<div class="apptrow"><span>Dueño</span><b>'+esc(a.client)+(a.phone?' · <a href="tel:'+esc(tel)+'">'+esc(a.phone)+'</a>':'')+'</b></div>'+
+    (a.notes?'<div class="apptrow"><span>Notas del turno</span><b>'+esc(a.notes)+'</b></div>':'')+'</div>'+
+    (a.petNotes?'<p class="warnbox"><b>Notas de la mascota:</b> '+esc(a.petNotes)+'</p>':''),btns);
 }
 
 /* ---------- Caja, proveedores, usuarios ---------- */
@@ -1890,20 +1945,6 @@ function passwordForm(){
       toast('Contraseña cambiada');
     }});
 }
-async function saveSettings(f){
-  if(!validateForm(f)){f.querySelector('.err').textContent='Revisá los campos marcados.';return;}
-  var fd=new FormData(f),get=function(k){return fd.get(k);};
-  var hours={};
-  f.querySelectorAll('.hopen').forEach(function(c){var d=c.dataset.d;hours[d]=c.checked?[f.querySelector('.hfrom[data-d="'+d+'"]').value,f.querySelector('.hto[data-d="'+d+'"]').value]:null;});
-  var body={shopName:get('shopName'),address:get('address'),phone:get('phone'),ticketText:get('ticketText'),ticketWidth:Number(get('ticketWidth')),hours:hours,
-    methods:ALL_PAY.filter(function(m){return fd.get('m_'+m);}),fixedCategories:CASH_OUT_CATS.filter(function(c){return fd.get('fx_'+c);}),
-    lowMargin:get('lowMargin'),lostDays:get('lostDays'),report:{enabled:!!get('repEnabled'),weekday:Number(get('repWeekday')),hour:Number(get('repHour')),recipients:get('repTo')}};
-  var btn=f.querySelector('[type=submit]');btn.disabled=true;btn.classList.add('busy');f.querySelector('.err').textContent='';
-  try{S.settings=await api('/settings',{method:'PUT',body:body});await reload();toast('Configuración guardada');}
-  catch(e){f.querySelector('.err').textContent=e.message;attachServerError(f,e.message);}
-  btn.disabled=false;btn.classList.remove('busy');
-}
-
 /* ---------- Copias ---------- */
 async function downloadExport(gz){
   await downloadFile('/backup/export'+(gz?'?gz=1':''),'copia-petshop-'+todayIso()+(gz?'.json.gz':'.json'));
@@ -1919,7 +1960,7 @@ function restoreConfirm(label,copyCounts,curCounts,doRestore){
   openForm({title:'Restaurar copia',danger:true,submit:'Restaurar',
     body:'<p>Vas a <b>reemplazar</b> los datos actuales ('+esc(countsText(curCounts))+') por esta copia ('+esc(countsText(copyCounts))+'). Lo que cargaste después de esa copia se pierde.</p>'+
       '<p><small>Copia: '+esc(label)+'. Antes se guarda automáticamente una copia de los datos de ahora. Los usuarios no cambian.</small></p>'+
-      (empty?'<p class="warnbox"><b>⚠️ Esta copia está vacía: restaurarla borra todo</b></p>':'')+
+      (empty?'<p class="warnbox"><b>Esta copia está vacía: restaurarla borra todo</b></p>':'')+
       '<label class="fld check"><input type="checkbox" name="understand" required><span>Entiendo que se reemplazan los datos actuales</span></label>',
     onSubmit:function(){return doRestore(empty);}});
 }
@@ -1951,6 +1992,7 @@ var actions={
   // Resumen
   'sum-period':function(id,b){ui.sum.period=b.dataset.v;if(b.dataset.v!=='range')store.set('petshop_period',b.dataset.v);if(b.dataset.v==='range'&&!(ui.sum.from&&ui.sum.to)){render();return;}return refreshView();},
   'sum-tab':function(id,b){ui.sum.tab=b.dataset.v;return refreshView();},
+  'sum-sub':function(id,b){ui.sum.sub=b.dataset.v;render();},
   'sum-topby':function(id,b){ui.sum.topBy=b.dataset.v;render();},
   'sum-pgroup':function(id,b){ui.sum.pgroup=b.dataset.v;ui.sum.products=null;return refreshView();},
   'sum-psort':function(id,b){var s=ui.sum.psort||{k:'profit',d:-1};ui.sum.psort={k:b.dataset.v,d:s.k===b.dataset.v?-s.d:(b.dataset.v==='name'?1:-1)};render();},
@@ -2097,13 +2139,11 @@ var actions={
       await api('/backups/'+id,{method:'DELETE'});await reload();toast('Copia eliminada');
     });
   },
-  // Usuarios, actividad y configuración
+  // Usuarios y actividad
   utab:function(id,b){ui.utab=b.dataset.v;return refreshView();},
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm(byId(ui.users,id));},
   'change-pass':function(){passwordForm();},
-  'report-preview':async function(){var r=await api('/report/preview');infoDialog('Vista previa del informe','<p><b>'+esc(r.subject)+'</b></p><iframe class="mailprev" sandbox="" title="Vista previa del informe" srcdoc="'+esc(r.html)+'"></iframe>');},
-  'report-send':async function(){var r=await api('/report/send',{body:{}});toast('Informe enviado a '+r.to.join(', '));ui.reportLog=await api('/report/log');render();},
   // Proveedores
   'new-supplier':function(){supplierForm();},
   'edit-supplier':function(id){supplierForm(byId(ui.suppliers,id));},
@@ -2216,7 +2256,6 @@ document.addEventListener('change',function(e){
   if(id==='cart-pet'){ui.cart.petId=t.value;return;}
   if(id==='stcat'){ui.cat=t.value;ui.stLimit=PAGE;render();return;}
   if(id==='auser'||id==='aaction'){ui[id]=t.value;refreshView();return;}
-  if(t.classList.contains('hopen')){var d=t.dataset.d;main.querySelectorAll('[data-d="'+d+'"].hfrom,[data-d="'+d+'"].hto').forEach(function(x){x.disabled=!t.checked;});return;}
   var ranges={sfrom:['sfrom','sto'],sto:['sfrom','sto'],cfrom:['cfrom','cto'],cto:['cfrom','cto'],afrom:['afrom','ato'],ato:['afrom','ato'],sumfrom:['from','to'],sumto:['from','to']};
   if(ranges[id]){
     var k=ranges[id],obj=id.indexOf('sum')===0?ui.sum:ui,key=id.indexOf('sum')===0?(id==='sumfrom'?'from':'to'):id;
@@ -2236,7 +2275,6 @@ document.addEventListener('change',function(e){
     }).catch(function(err){toast(err.message==='formato'||err instanceof SyntaxError?'El archivo no es una copia válida de este sistema.':err.message,true);});
   }
 });
-document.addEventListener('submit',function(e){if(e.target.id==='cfgform'){e.preventDefault();saveSettings(e.target);}});
 $('#menubtn').addEventListener('click',function(){var open=document.body.classList.toggle('navopen');this.setAttribute('aria-expanded',String(open));});
 $('#loginform').addEventListener('submit',async function(e){
   e.preventDefault();

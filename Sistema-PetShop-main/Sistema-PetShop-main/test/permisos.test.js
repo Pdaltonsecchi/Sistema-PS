@@ -179,17 +179,27 @@ test('agenda: no se reserva en una fecha pasada (sí se carga como entregado)', 
   assert.equal(h.status, 200);
 });
 
-test('agenda: misma mascota a la misma hora → 409 con el detalle; el empleado no puede forzarlo', async () => {
+test('agenda: misma mascota a la misma hora → 409 con el detalle, sin posibilidad de forzarlo', async () => {
   const existing = [{ id: 9, pet_id: 1, on_date: future, at_time: '10:00:00', duration_min: 60, status: 'reservado', staff: '', pet: 'Firu' }];
   reset(apptRules(existing));
   const r = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, confirmOverlap: true });
   assert.equal(r.status, 409);
   assert.equal(r.body.code, 'overlap_forbidden');
   assert.match(r.body.error, /Firu ya tiene un turno de 10:00 a 11:00/);
-  const a = await call('admin', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60 });
-  assert.equal(a.body.code, 'overlap');
-  const ok = await call('admin', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, confirmOverlap: true });
-  assert.equal(ok.status, 200);
+  const a = await call('admin', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, confirmOverlap: true });
+  assert.equal(a.status, 409);
+  assert.equal(a.body.code, 'overlap_forbidden');
+});
+
+test('agenda: dos turnos a la misma hora se pueden pisar solo si los atiende personal distinto', async () => {
+  const existing = [{ id: 9, pet_id: 2, on_date: future, at_time: '10:00:00', duration_min: 60, status: 'reservado', staff: 'Ana', pet: 'Michi' }];
+  reset(apptRules(existing));
+  const same = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, staff: 'ana' });
+  assert.equal(same.status, 409);
+  assert.equal(same.body.code, 'overlap_forbidden');
+  assert.match(same.body.error, /ya atiende a Michi/);
+  const other = await call('staff', 'POST', '/api/appointments', { petId: 1, date: future, time: '10:30', duration: 60, staff: 'Luis' });
+  assert.equal(other.status, 200);
 });
 
 test('agenda: turno contiguo (11 a 12 después de 10 a 11) no se pisa', async () => {

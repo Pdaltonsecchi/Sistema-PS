@@ -104,8 +104,8 @@ function overlaps(aTime, aDur, bTime, bDur) {
 const INACTIVE = ['cancelado', 'no_vino'];
 const normStaff = (s) => String(s || '').trim().toLowerCase();
 /**
- * Turnos del mismo día que chocan con `a`: misma mascota, o mismo peluquero ("Atiende") si está cargado.
- * Los cancelados y los "no vino" no ocupan lugar.
+ * Turnos del mismo día que chocan con `a`: misma mascota, o el mismo personal asignado (si está cargado).
+ * Dos turnos se pueden pisar solo si los atiende personal distinto. Los cancelados y los "no vino" no ocupan lugar.
  */
 function findConflicts(a, others) {
   if (INACTIVE.includes(a.status)) return [];
