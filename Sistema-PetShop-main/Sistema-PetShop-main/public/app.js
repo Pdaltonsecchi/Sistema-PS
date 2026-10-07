@@ -182,7 +182,7 @@ async function api(path,opts){
 }
 // Avisos del servidor que se pueden confirmar ("¿Guardar igual?"): código → dato que se reenvía.
 var CONFIRMS={loss:['confirmLoss','Guardar igual'],duplicate:['confirmDuplicate','Guardar igual'],past:['confirmPast','Guardar igual'],hours:['confirmHours','Reservar igual'],
-  expired:['confirmExpired','Vender igual'],future_date:['confirmFuture','Sí, es correcta'],barcode_taken:['reassign','Pasar el código']};
+  overlap_soft:['confirmOverlap','Agendar igual'],expired:['confirmExpired','Vender igual'],future_date:['confirmFuture','Sí, es correcta'],barcode_taken:['reassign','Pasar el código']};
 /** Como api(), pero si el servidor pide confirmación muestra la pregunta y reintenta con la confirmación. */
 async function apiConfirm(path,opts){
   for(var i=0;i<6;i++){
@@ -1376,7 +1376,7 @@ function calMonthGrid(){
       (list.length>3?'<button class="cal-more" data-action="cal-day" data-v="'+d+'">+'+(list.length-3)+' más</button>':'')+'</div>';
     d=shiftDays(1,d);
   }
-  return '<div class="cal-month">'+cells+'</div>';
+  return '<div class="calscroll"><div class="cal-month">'+cells+'</div></div>';
 }
 /**
  * Vista Día como grilla horaria: franjas de 30 minutos, cada turno es un bloque del alto de su duración; los que se
@@ -1396,7 +1396,7 @@ function calDayGrid(){
   });
   var n=Math.max(1,cols.length);
   var blocks=act.map(function(a){
-    var s=toMin(a.time),clash=act.some(function(b){return b!==a&&(b.petId===a.petId||(a.staff&&norm(b.staff)===norm(a.staff)))&&s<toMin(b.time)+b.duration&&toMin(b.time)<s+a.duration;});
+    var s=toMin(a.time),clash=act.some(function(b){return b!==a&&s<toMin(b.time)+b.duration&&toMin(b.time)<s+a.duration;});
     return '<button class="appt grid st-'+a.status+(clash?' clash':'')+'" data-action="appt-view" data-id="'+a.id+'" style="top:'+((s-open)/SLOT*PX)+'px;height:'+Math.max(PX*0.8,a.duration/SLOT*PX-3)+'px;left:calc('+(a._col/n*100)+'% + 2px);width:calc('+(100/n)+'% - 4px)">'+
       (clash?'<b class="clashtag">Se pisa</b>':'')+apptLabel(a)+'<small>'+esc(a.service||'Sin servicio')+' · hasta '+a.endTime+(a.staff?' · '+esc(a.staff):'')+' · '+esc(APPT_LABEL[a.status])+'</small></button>';
   }).join('');
@@ -1411,7 +1411,7 @@ function viewAgenda(){
   var body;
   if(ui.cal.view==='month')body=calMonthGrid();
   else if(ui.cal.view==='day')body=calDayGrid();
-  else{var r=calRange(),cells='',d=r[0];while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}body='<div class="cal-week fit">'+cells+'</div>';}
+  else{var r=calRange(),cells='',d=r[0];while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}body='<div class="calscroll"><div class="cal-week fit">'+cells+'</div></div>';}
   return '<section class="farm"><div class="head"><h1>Agenda de turnos</h1><button class="btn primary" data-action="new-appt">Nuevo turno</button></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">'+({day:'Hoy',week:'Semana',month:'Mes'}[ui.cal.view]||'Hoy')+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title" aria-live="polite">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view,'Vista')+'</div>'+
@@ -1895,7 +1895,9 @@ function appointmentForm(a,presetDate,presetPet,presetTime){
   f.querySelector('[name="serviceId"]').addEventListener('change',function(e){var s=servById(e.target.value);if(s)f.querySelector('[name="duration"]').value=s.duration;});
 }
 async function setApptStatus(a,status){
-  await api('/appointments/'+a.id+'/status',{body:{status:status}});
+  // El estado que se muestra es el que devolvió el servidor, no el que se pidió.
+  var r=await api('/appointments/'+a.id+'/status',{body:{status:status}});
+  status=(r&&r.status)||status;
   dlg.close();await reloadCal();
   // Al terminar un turno sin cobrar, se ofrece cobrarlo.
   if((status==='listo'||status==='entregado')&&!a.saleId){

@@ -18,7 +18,7 @@ const TABLES = [
   ['sale_items', ['id', 'sale_id', 'kind', 'product_id', 'service_id', 'name', 'category', 'unit', 'qty', 'unit_price', 'list_price', 'price_reason', 'unit_cost', 'amount']],
   ['sale_payments', ['id', 'sale_id', 'method', 'amount', 'cash_id']],
   ['stock_movements', ['id', 'product_id', 'product_name', 'on_date', 'qty', 'reason', 'unit_price', 'note', 'sale_id', 'supplier_id', 'cash_id', 'voided', 'created_by', 'created_at']],
-  ['appointments', ['id', 'pet_id', 'service_id', 'on_date', 'at_time', 'duration_min', 'status', 'notes', 'staff', 'started_at', 'finished_at', 'sale_id', 'created_at']],
+  ['appointments', ['id', 'pet_id', 'service_id', 'on_date', 'at_time', 'duration_min', 'status', 'notes', 'staff', 'started_at', 'finished_at', 'confirmed_at', 'sale_id', 'created_at']],
   ['cash_closings', ['id', 'on_date', 'expected', 'counted', 'difference', 'note', 'created_at']],
   ['audit_log', ['id', 'at', 'user_id', 'user_name', 'action', 'entity', 'entity_id', 'before', 'after', 'reason']],
 ];

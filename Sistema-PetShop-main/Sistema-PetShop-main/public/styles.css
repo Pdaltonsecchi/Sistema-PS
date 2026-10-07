@@ -687,3 +687,17 @@ polyline.l-cur{stroke-width:2.5}
 .ticketprev .ticket .c{text-align:center}
 .ticketprev .ticket .tot{font-weight:700;font-size:12pt}
 .ticketprev .ticket .foot{text-align:center;font-size:8.5pt;margin-top:.8em}
+
+/* Agenda: la grilla tiene su propio scroll horizontal (no la página) y una sombra en el borde con contenido oculto */
+.cal-week{grid-template-columns:repeat(7,minmax(92px,1fr))}
+.cal-month{grid-template-columns:repeat(7,minmax(92px,1fr))}
+.calscroll{overflow-x:auto;overscroll-behavior-x:contain;
+  background:
+    linear-gradient(to right,var(--bg) 30%,transparent) left center/40px 100% no-repeat local,
+    linear-gradient(to left,var(--bg) 30%,transparent) right center/40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%,rgba(15,42,67,.3),transparent) left center/14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%,rgba(15,42,67,.3),transparent) right center/14px 100% no-repeat scroll}
+.calscroll::-webkit-scrollbar{height:10px}
+.calscroll::-webkit-scrollbar-thumb{background:#B8C2CF;border-radius:6px}
+@media (max-width:1100px) and (min-width:821px){:root{--side-w:212px}}
+@media (max-width:820px){.cal-week,.cal-month{grid-template-columns:1fr}}

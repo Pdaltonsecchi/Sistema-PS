@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS appointments (
 );
 CREATE INDEX IF NOT EXISTS appt_date_idx ON appointments(on_date);
 CREATE INDEX IF NOT EXISTS appt_pet_idx ON appointments(pet_id);
+-- Cuándo se confirmó el turno (el pase automático a «Listo para retirar» solo vale para turnos confirmados antes de que terminen).
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
 -- Bases existentes: el estado «confirmado» se agregó después.
 ALTER TABLE appointments DROP CONSTRAINT IF EXISTS appointments_status_check;
 ALTER TABLE appointments ADD CONSTRAINT appointments_status_check CHECK (status IN ('reservado', 'confirmado', 'en_curso', 'listo', 'entregado', 'no_vino', 'cancelado'));

@@ -119,6 +119,12 @@ function findConflicts(a, others) {
   );
 }
 
+/** Cualquier turno activo del mismo día que se pise con `a` (sin importar la mascota ni el personal): para avisar de un choque de horario. */
+function findOverlaps(a, others) {
+  if (INACTIVE.includes(a.status)) return [];
+  return others.filter((o) => o.id !== a.id && o.date === a.date && !INACTIVE.includes(o.status) && overlaps(a.time, a.duration, o.time, o.duration));
+}
+
 // Horario comercial por día de la semana (0 = domingo). null = cerrado.
 const DEFAULT_HOURS = { 0: null, 1: ['09:00', '19:00'], 2: ['09:00', '19:00'], 3: ['09:00', '19:00'], 4: ['09:00', '19:00'], 5: ['09:00', '19:00'], 6: ['09:00', '19:00'] };
 const weekday = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
@@ -288,7 +294,7 @@ function checkProductPrice(price, cost, isGift, confirmLoss) {
 }
 
 module.exports = {
-  priceSale, splitPayments, overlaps, findConflicts, withinHours, checkHours, DEFAULT_HOURS, weekday,
+  priceSale, splitPayments, overlaps, findConflicts, findOverlaps, withinHours, checkHours, DEFAULT_HOURS, weekday,
   pctChange, marginPct, breakEven, projectMonth, reachDay, lostClients, peakPhrase,
   csvCell, csvDoc, normalizeBarcode, gtinValid, checkProductPrice, fmtMoney,
 };
