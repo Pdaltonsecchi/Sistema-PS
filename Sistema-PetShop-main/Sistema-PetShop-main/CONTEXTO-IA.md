@@ -43,6 +43,7 @@ Hosting: Render Web Service plan Free (`render.yaml`). Única dependencia: `pg`.
 - **Actividad:** `AUDIT_ACTIONS` (server/api.js) es la lista de acciones que se registran; el filtro de la pantalla la usa. Borrar un movimiento de caja pide motivo (`DELETE /api/cash/:id?reason=`) y queda quién y por qué.
 - **Resumen:** «días y horarios pico» solo da conclusiones con datos suficientes (`L.PEAK_MIN`: 20 ventas en 7 días distintos); la proyección del mes usa ritmo esperado, bajo y alto solo para los días que faltan.
 - **Pantalla:** reglas puras en `public/ui-rules.js` (etiquetas de gráficos que no se pisan, Enter en Vender, `latest()` para descartar respuestas viejas, `busyWhile` como único patrón de «cargando»: clase `busy` después de 150 ms).
+- **Llegó mercadería (`POST /api/products/:id/purchase`):** el empleado puede mandar `paid` (total pagado) y `method`: se crea el egreso en caja y el costo pasa a `paid / qty`; no recibe `costChanged`. Precio por unidad, proveedor y fecha siguen siendo solo del dueño (403).
 - **Permisos:** cada ruta declara `{ admin: true }`; `test/permisos.test.js` tiene la tabla completa y falla si aparece una ruta del dueño no declarada.
 
 ## Modelo de datos (db/schema.sql)

@@ -8,15 +8,14 @@ Sistema pensado para **el dueño del pet shop**: el stock de lo que vendés, las
 
 | Pantalla | Para qué sirve | Quién la ve |
 |---|---|---|
-| **Resumen** | Todos los números en una sola pantalla, con **selector de período** (hoy, ayer, 7 días, este mes, mes anterior o un rango). Pestañas: **General** (vendido, ganancia y margen, ticket promedio, ventas, efectivo en caja, gastos, evolución, mes a mes, lo más vendido, categorías, medios de pago, comparación con el mes anterior y el año pasado, horarios y días pico, avisos), **Productos** (rentabilidad por producto, marca o categoría), **Clientes** (frecuentes, perdidos con botón de WhatsApp, nuevos vs. recurrentes), **Personal** (rendimiento de cada peluquero) y **Proyección** (cómo cierra el mes y punto de equilibrio) | Todos (el empleado ve ventas y cantidades, sin costos ni ganancias) |
+| **Resumen** | Todos los números en una sola pantalla, con **selector de período** (hoy, ayer, 7 días, este mes, mes anterior o un rango). Pestañas: **General** (vendido, ganancia y margen, ticket promedio, ventas, efectivo en caja, gastos, evolución, medios de pago, categorías, productos que más dejan, estado del negocio y avisos, todo en un solo panorama), **Productos** (rentabilidad por producto, marca o categoría), **Clientes** (frecuentes, perdidos con botón de WhatsApp, nuevos vs. recurrentes), **Personal** (rendimiento de cada peluquero) y **Proyección** (cómo cierra el mes y punto de equilibrio) | Todos (el empleado ve ventas y cantidades, sin costos ni ganancias) |
 | **Vender** | Punto de venta: buscás o escaneás productos (cámara o lector USB), sumás servicios, cantidades con − / + (con tope de stock), descuento, cliente (opcional), forma de pago o **pago mixto** → **Cobrar**. Atajos: F2 buscar, F4 cobrar, Esc vaciar. Imprime ticket de 58 u 80 mm | Todos (cambiar un precio: solo el dueño y con motivo) |
-| **Ventas** | Historial con número correlativo, búsqueda, ganancia, ticket para reimprimir y **anular venta** con motivo obligatorio (devuelve el stock y saca el ingreso de la caja) | Todos (el empleado solo ve las de hoy, sin ganancias) |
 | **Stock** | Catálogo con categorías, marca, varios códigos de barras, venta por unidad o **suelto por kilo**, costo, margen, vencimiento, regalo/promoción, botón **Vender**, "llegó mercadería", **ingreso con escáner**, ajustes, historial, **abrir bolsa**, **actualizar precios por %** y **Para pedir** (pedido por proveedor para copiar o mandar por WhatsApp) | Todos (costos y cambios: solo el dueño) |
 | **Servicios** | Precios de baño y peluquería (con duración) | Todos (editar: dueño) |
 | **Agenda** | Turnos por mascota y **personal asignado**, vista Día en grilla horaria, Semana y Mes. Avisa superposiciones, fuera de horario y fechas pasadas. Estados y botón **Cobrar** | Todos |
 | **Clientes** | Contacto, mascotas (especie, raza, tamaño chico/mediano/grande, notas), compras, turnos y WhatsApp | Todos (borrar: dueño) |
 | **Proveedores** | Contacto, productos que te vende y lo que le pagaste | Todos (editar: dueño) |
-| **Caja** | Ingresos y egresos con forma de pago, efectivo que debería haber, **cierre de caja diario** y exportación a Excel (CSV) | Dueño |
+| **Caja** | Ingresos y egresos con forma de pago, **Ver venta** (detalle, ticket y **anular venta** con motivo obligatorio), efectivo que debería haber, **cierre de caja diario** y exportación a Excel (CSV) | Dueño |
 | **Copias de seguridad** | Copia automática diaria, descarga comprimida a tu computadora y espacio usado de la base | Dueño |
 | **Usuarios y actividad** | Dueño/administrador y empleados, y el **registro de actividad** (cambios de precio, anulaciones, stock, caja, usuarios) | Dueño |
 
@@ -99,7 +98,7 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 ## El día a día
 
 - **Vender:** pantalla *Vender* (o botón *Vender* en cada producto del Stock). Con un **lector de código de barras USB** solo pasás el producto: se suma solo a la venta. Con el celular usá **Escanear con la cámara** (hace falta abrir el sistema con https, como en Render). Detalle y prueba paso a paso: [`docs/escaner.md`](docs/escaner.md).
-- **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja.
+- **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja. El empleado también lo usa: anota la cantidad y, si pagó en el momento, cuánto pagó en total y con qué; eso entra como egreso en caja y queda en *Actividad* (él sigue sin ver la caja ni los costos).
 - **Qué pedir:** *Stock → Para pedir* te arma el pedido por proveedor; **Copiar pedido** o **Enviar por WhatsApp**.
 - **Peluquería:** agendá el turno en *Agenda* (con quién lo atiende); cuando está listo, tocá el turno → **Listo para retirar** → **Cobrar**. Dos turnos que se superponen se avisan pero se pueden agendar igual.
 - **Recordatorios:** *Agenda → Nuevo recordatorio* sirve para anotar algo sin cliente ni mascota (por ejemplo «Llamar al distribuidor»). Un turno con un servicio del catálogo sigue pidiendo la mascota.
