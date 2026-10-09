@@ -62,7 +62,8 @@ var APPT_LABEL={en_curso:'En curso'};APPT_STATUS.forEach(function(x){APPT_LABEL[
 var APPT_FORM_STATUS=[['reservado','Reservado'],['confirmado','Confirmado']];
 var APPT_VIEWS=[['day','Día'],['week','Semana'],['month','Mes']];
 var WEEKDAYS_LONG=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-var EXPIRY_DAYS=30; // aviso de vencimiento: productos que vencen en los próximos 30 días
+// Aviso de vencimiento: productos que vencen en los próximos N días (Configuración → Alertas de stock).
+var expiryDays=function(){return Number(S.settings.expiryDays)||30;};
 var PAGE=100; // filas por página en las listas largas
 
 /* ============================================================
@@ -108,7 +109,7 @@ var period0=function(){var p=store.get('petshop_period');return ['today','yester
 var ui={view:'',cart:newCart(),posq:'',scanStrip:false,
   stq:'',cat:'all',stf:'all',stab:'products',stLimit:PAGE,
   sales:null,sfrom:'',sto:'',sq:'',saLimit:PAGE,
-  sum:{period:period0(),from:'',to:'',tab:'general',sub:'panorama',data:null,monthly:null,compare:null,hours:null,products:null,pgroup:'product',clients:null,staff:null,proj:null,topBy:'units',monthsOpen:false},
+  sum:{period:period0(),from:'',to:'',tab:'general',sub:'panorama',more:'evolucion',cmpOpen:false,data:null,monthly:null,compare:null,hours:null,products:null,pgroup:'product',clients:null,staff:null,proj:null,topBy:'units',monthsOpen:false},
   cq:'',cfopen:false,cashp:'month',cashf:'all',cashm:'all',cash:null,closings:null,cfrom:'',cto:'',caLimit:PAGE,
   backups:null,usage:null,users:null,utab:'users',audit:null,afrom:'',ato:'',auser:'',aaction:'',
   suppliers:null,supq:'',reportLog:null,
@@ -122,7 +123,7 @@ var servById=function(id){return id?S.services.find(function(x){return String(x.
 var clientById=function(id){return id?S.clients.find(function(x){return String(x.id)===String(id);})||null:null;};
 var supplierById=function(id){return id?(S.suppliers||[]).find(function(x){return String(x.id)===String(id);})||null:null;};
 var lowStock=function(x){return x.stock<=x.min;};
-var expiring=function(x){return !!x.expires&&diffDays(x.expires)<=EXPIRY_DAYS;};
+var expiring=function(x){return !!x.expires&&diffDays(x.expires)<=expiryDays();};
 var expired=function(x){return !!x.expires&&diffDays(x.expires)<0;};
 var prodByBarcode=function(code){var c=normCode(code);return c?S.products.find(function(x){return (x.barcodes||[]).indexOf(c)>=0||x.barcode===c;}):undefined;};
 var prodLabel=function(x){return x.name+(x.brand?' – '+x.brand:'');};
@@ -437,13 +438,18 @@ function calRange(){
   var wd=parse(last).getDay();wd=wd===0?7:wd;
   return [mondayOf(first),shiftDays(7-wd,last)];
 }
+var calSeq=UR.latest();
 async function loadAppointments(){
-  var r=calRange();
+  var r=calRange(),t=calSeq.next();
   var x=await Promise.all([api('/appointments?from='+r[0]+'&to='+r[1]),api('/appointments/staff')]);
-  ui.appts=x[0].items;ui.staffNames=x[1].items;
+  if(!calSeq.isCurrent(t))return;
+  ui.appts=x[0].items;ui.staffNames=x[1].items;ui.calLoading=false;
 }
+/* Cambiar de vista o de semana se ve al instante (con los turnos que ya están, en gris) mientras llegan los nuevos:
+   antes la pantalla no cambiaba hasta que respondía el servidor y parecía que el primer clic no andaba. */
 async function reloadCal(){
-  try{await loadAppointments();}catch(e){toast(e.message,true);}
+  ui.calLoading=true;render();
+  try{await loadAppointments();}catch(e){ui.calLoading=false;toast(e.message,true);}
   render();
 }
 function calShift(dir){
@@ -506,7 +512,7 @@ async function refreshView(){
 function navItems(){
   var a=[['resumen','Resumen','Principal'],['vender','Vender','Principal'],['ventas','Ventas','Principal'],['agenda','Agenda','Principal'],
     ['stock','Stock','Catálogo'],['servicios','Servicios','Catálogo'],['clientes','Clientes','Contactos'],['proveedores','Proveedores','Contactos']];
-  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración']);
+  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración'],['configuracion','Configuración','Administración']);
   return a;
 }
 function renderNav(){
@@ -635,19 +641,19 @@ function kpiCards(D){
     (D.days>=7?card('Clientes nuevos',String(K.newClients),delta(C.newClients)):'')+'</div>';
 }
 var noSales=function(){return '<p class="empty">Todavía no hay ventas en este período.</p>';};
-function sumSubs(){
-  var a=[['panorama','Panorama'],['evolucion','Evolución'],['masvendidos','Más vendidos'],['pagos','Medios de pago']];
-  if(isAdmin())a.push(['comparacion','Comparación']);
-  a.push(['horarios','Horarios']);
-  return a;
-}
+/* General: Panorama (la entrada), Más vendidos y «Más análisis», que agrupa Evolución, Comparación y Horarios
+   en un segundo nivel para no competir con el Panorama. Los medios de pago ya están en el anillo del Panorama. */
+function sumSubs(){return [['panorama','Panorama'],['masvendidos','Más vendidos'],['analisis','Más análisis']];}
+function sumMore(){return [['evolucion','Evolución']].concat(isAdmin()?[['comparacion','Comparación']]:[]).concat([['horarios','Horarios y días pico']]);}
 function sumGeneral(){
   var D=ui.sum.data;
   if(!D)return '<div class="skeleton" aria-busy="true" aria-label="Cargando"><i></i><i></i><i></i></div>';
   var subs=sumSubs(),sub=subs.some(function(x){return x[0]===ui.sum.sub;})?ui.sum.sub:'panorama';
   var nav='<div class="subnav" role="group" aria-label="Pantallas del resumen">'+subs.map(function(x){return '<button class="subtab" data-action="sum-sub" data-v="'+x[0]+'" aria-pressed="'+(x[0]===sub)+'">'+x[1]+'</button>';}).join('')+'</div>';
-  var body=sub==='evolucion'?sumEvolucion(D):sub==='masvendidos'?sumMasVendidos(D):sub==='pagos'?sumPagos(D):sub==='comparacion'&&isAdmin()?comparePanel():sub==='horarios'?hoursPanel():sumPanorama(D);
-  return nav+body;
+  if(sub!=='analisis')return nav+(sub==='masvendidos'?sumMasVendidos(D):sumPanorama(D));
+  var more=sumMore(),m=more.some(function(x){return x[0]===ui.sum.more;})?ui.sum.more:'evolucion';
+  var nav2='<div class="moretabs">'+segHTML('sum-more',more,m,'Más análisis')+'</div>';
+  return nav+nav2+(m==='comparacion'?comparePanel():m==='horarios'?hoursPanel():sumEvolucion(D));
 }
 // Panorama: el tablero con lo más importante en una sola mirada.
 function sumPanorama(D){
@@ -684,13 +690,6 @@ function sumMasVendidos(D){
   return '<div class="grid2"><section class="panel"><div class="sec-head"><h2 class="h3">Lo más vendido</h2>'+(admin?segHTML('sum-topby',[['units','Por unidades'],['profit','Por ganancia']],ui.sum.topBy,'Ordenar'):'')+'</div>'+top+'</section>'+
     '<section class="panel"><h2 class="h3">Ventas por categoría</h2>'+cats+'</section></div>';
 }
-function sumPagos(D){
-  var tot=D.payments.reduce(function(n,p){return n+p.total;},0);
-  if(!tot)return '<section class="panel"><h2 class="h3">Medios de pago</h2><p class="empty">Sin cobros en este período.</p></section>';
-  var rows=D.payments.map(function(p,i){return '<tr><td><i class="sw sw'+(i%CHART_COLORS)+'"></i> '+esc(p.method)+'</td><td class="num">'+money(p.total)+'</td><td class="num">'+pct(p.total/tot*100)+'</td></tr>';}).join('');
-  return '<div class="grid2"><section class="panel"><h2 class="h3">Cómo te pagan</h2>'+donut(D.payments.map(function(p){return {label:p.method,value:p.total};}),money,'cobrado')+'</section>'+
-    '<section class="panel"><h2 class="h3">Detalle</h2><div class="tbl-wrap"><table class="tbl slim"><thead><tr><th>Medio</th><th class="num">Cobrado</th><th class="num">%</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td><b>Total</b></td><td class="num"><b>'+money(tot)+'</b></td><td></td></tr></tfoot></table></div></section></div>';
-}
 function monthlyPanel(){
   var M=ui.sum.monthly;if(!M)return '';
   var any=M.some(function(m){return m.sales||m.expenses||m.purchases;});
@@ -703,14 +702,22 @@ function monthlyPanel(){
     '<p class="note2">Ganancia bruta = lo vendido menos lo que te costó. Gastos = egresos que no son compras de mercadería ni retiros. Resultado = ganancia bruta − gastos.</p>'+
     '<button class="btn" data-action="sum-export" data-v="monthly">Exportar CSV</button>':'<p class="empty">Todavía no hay movimientos para mostrar mes a mes.</p>')+'</details>';
 }
+// Comparación: a la vista, solo lo clave (Vendido, Ganancia, Ventas) contra el período anterior; el resto, plegado.
+var COMPARE_KEY=['total','profit','count'];
 function comparePanel(){
-  var C=ui.sum.compare;if(!C)return '';
+  var C=ui.sum.compare;if(!C)return '<div class="skeleton" aria-busy="true" aria-label="Cargando"><i></i><i></i></div>';
+  var keyCards='<div class="cards">'+C.rows.filter(function(r){return COMPARE_KEY.indexOf(r.key)>=0;}).map(function(r){
+    var f=r.key==='count'?String:money;
+    return card(esc(r.label),f(r.current),delta(r.prevMonth.pct,r.upIsGood)+' vs. '+f(r.prevMonth.value)+' del mes anterior');
+  }).join('')+'</div>';
   var cell=function(r,ref){if(!ref)return '<td colspan="3" class="mut">Sin datos del año anterior</td>';var money_=r.key==='count'||r.key==='newClients'?String:money;
     return '<td class="num">'+money_(ref.value)+'</td><td class="num">'+(ref.diff>=0?'+':'')+money_(ref.diff)+'</td><td class="num">'+delta(ref.pct,r.upIsGood)+'</td>';};
   var rows=C.rows.map(function(r){var f=r.key==='count'||r.key==='newClients'?String:money;return '<tr><td><b>'+esc(r.label)+'</b></td><td class="num"><b>'+f(r.current)+'</b></td>'+cell(r,r.prevMonth)+cell(r,r.prevYear)+'</tr>';}).join('');
   var lines=C.lines?lineChart([{label:'Este período',data:C.lines.current,cls:'l-cur'},{label:'Mes anterior',data:C.lines.prevMonth,cls:'l-pm'}].concat(C.lines.prevYear?[{label:'Año pasado',data:C.lines.prevYear,cls:'l-py'}]:[]),null):'';
-  return '<section class="panel"><h2 class="h3">Comparación</h2><p class="note2">Contra el mismo período del mes anterior ('+fmtDate(C.ref.prevMonth[0])+' al '+fmtDate(C.ref.prevMonth[1])+') y del año pasado ('+fmtDate(C.ref.prevYear[0])+' al '+fmtDate(C.ref.prevYear[1])+').</p>'+
-    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="num">Actual</th><th class="num">Mes anterior</th><th class="num">Diferencia</th><th class="num">%</th><th class="num">Año pasado</th><th class="num">Diferencia</th><th class="num">%</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+lines+'</section>';
+  return '<section class="panel"><h2 class="h3">Comparación</h2><p class="note2">Contra el mismo período del mes anterior ('+fmtDate(C.ref.prevMonth[0])+' al '+fmtDate(C.ref.prevMonth[1])+').</p>'+keyCards+
+    '<details class="moredetail" id="cmpmore"'+(ui.sum.cmpOpen?' open':'')+'><summary>Ver más detalle (gastos, ticket promedio, clientes nuevos y año pasado)</summary>'+
+    '<p class="note2">Año pasado: '+fmtDate(C.ref.prevYear[0])+' al '+fmtDate(C.ref.prevYear[1])+'.</p>'+
+    '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="num">Actual</th><th class="num">Mes anterior</th><th class="num">Diferencia</th><th class="num">%</th><th class="num">Año pasado</th><th class="num">Diferencia</th><th class="num">%</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+lines+'</details></section>';
 }
 function hoursPanel(){
   var Hh=ui.sum.hours;if(!Hh)return '';
@@ -727,7 +734,8 @@ function hoursPanel(){
   }).join('');
   var dmax=Math.max.apply(null,Hh.byDay.map(function(x){return x.total;}).concat([1]));
   var days=order.map(function(d){var x=Hh.byDay[d];return '<li><span>'+WEEKDAYS_LONG[d]+'</span><span class="bars"><span class="bar" style="width:'+Math.max(1,x.total/dmax*100)+'%"></span></span><b>'+money(x.total)+'</b></li>';}).join('');
-  return '<section class="panel"><h2 class="h3">Horarios y días pico</h2>'+(Hh.phrase?'<p class="phrase">'+esc(Hh.phrase)+'</p>':'')+
+  // Con pocas ventas (Hh.reliable falso) no se afirma un patrón: se avisa cuántos datos faltan.
+  return '<section class="panel"><h2 class="h3">Horarios y días pico</h2>'+(Hh.phrase?'<p class="'+(Hh.reliable===false?'note2 lowdata':'phrase')+'">'+esc(Hh.phrase)+'</p>':'')+
     '<div class="tbl-wrap heatwrap"><table class="heat"><caption class="sr-only">Cantidad de ventas por día y hora</caption><thead>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+
     '<p class="note2">Cuanto más oscuro, más ventas. Las celdas vacías son las franjas más flojas.</p><ul class="barlist">'+days+'</ul></section>';
 }
@@ -786,17 +794,18 @@ function sumProyeccion(){
   if(!P)return '<div class="skeleton" aria-busy="true"><i></i><i></i></div>';
   var p=P.projection,b=P.breakEven,mes=parse(P.month+'-01').toLocaleDateString('es-AR',{month:'long'});
   var be=b.need==null?'<p class="empty">'+(b.margin==null?'Todavía no hay ventas con costo cargado para calcular el margen.':'Con el margen actual ('+pct(b.margin)+') no se puede calcular el punto de equilibrio.')+'</p>':
-    '<p>Gastos fijos del mes: <b>'+money(b.fixedCosts)+'</b> <small>('+esc((b.fixedCategories||[]).join(', ')||'ninguna categoría marcada')+')</small> · Margen bruto promedio: <b>'+pct(b.margin)+'</b></p>'+
+    '<p>Gastos fijos del mes: <b>'+money(b.fixedCosts)+'</b> <small>('+(b.fixedSource==='manual'?'cargados en Configuración':'egresos de '+esc((b.fixedCategories||[]).join(', ')||'ninguna categoría marcada'))+')</small> · Margen bruto promedio: <b>'+pct(b.margin)+'</b></p>'+
     '<p class="big">Necesitás vender '+money(b.need)+' para no perder</p>'+
     '<div class="meter'+(b.progress>=100?'':' warnm')+'" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(b.progress)+'"><i style="width:'+Math.max(1,b.progress)+'%"></i></div>'+
     '<p>Vendiste <b>'+money(P.sales)+'</b> de <b>'+money(b.need)+'</b> necesarios ('+pct(b.progress)+'). '+(b.progress>=100?'¡Ya cubriste los gastos fijos del mes! ':b.reachDate?'Al ritmo actual lo alcanzás el '+fmtDate(b.reachDate)+'.':'Al ritmo actual no se alcanza este mes.')+'</p>';
-  return '<section class="panel"><h2 class="h3">Proyección de '+mes+'</h2><p class="note2">Es una estimación: combina el ritmo de este mes (día '+P.day+' de '+P.daysInMonth+') con el promedio de '+(P.avgMonths?'los últimos '+plural(P.avgMonths,'mes','meses'):'— todavía no hay meses anteriores —')+'.</p>'+
+  return '<section class="panel"><h2 class="h3">Proyección de '+mes+'</h2><p class="note2">Es una estimación: lo vendido hasta hoy es real y se proyectan los '+plural(p.daysLeft==null?P.daysInMonth-P.day:p.daysLeft,'día que falta','días que faltan')+' con el ritmo de este mes (día '+P.day+' de '+P.daysInMonth+')'+(P.avgMonths?' combinado con el promedio de los últimos '+plural(P.avgMonths,'mes','meses'):' (todavía no hay meses anteriores para comparar)')+'. Prudente: un 15 % menos de ritmo de ventas y un 15 % más de gastos; optimista, al revés.</p>'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th class="num">Prudente</th><th class="num">Esperado</th><th class="num">Optimista</th></tr></thead><tbody>'+
     '<tr><td>Ventas a fin de mes</td><td class="num">'+money(p.sales.prudent)+'</td><td class="num"><b>'+money(p.sales.expected)+'</b></td><td class="num">'+money(p.sales.optimistic)+'</td></tr>'+
     '<tr><td>Egresos a fin de mes</td><td class="num">'+money(p.expenses.prudent)+'</td><td class="num"><b>'+money(p.expenses.expected)+'</b></td><td class="num">'+money(p.expenses.optimistic)+'</td></tr>'+
     '<tr><td><b>Saldo de caja del mes</b></td><td class="num '+(P.result.prudent>=0?'in':'out')+'">'+money(P.result.prudent)+'</td><td class="num '+(P.result.expected>=0?'in':'out')+'"><b>'+money(P.result.expected)+'</b></td><td class="num '+(P.result.optimistic>=0?'in':'out')+'">'+money(P.result.optimistic)+'</td></tr>'+
     '</tbody></table></div><p class="note2">Hasta hoy: vendiste '+money(P.sales)+' y gastaste '+money(P.expenses)+'.</p></section>'+
-    '<section class="panel"><h2 class="h3">Punto de equilibrio</h2>'+be+'</section>';
+    '<section class="panel"><div class="sec-head"><h2 class="h3">Punto de equilibrio</h2><button class="btn" data-action="goto-fixed">'+(b.fixedCosts>0?'Cambiar gastos fijos':'Cargar gastos fijos')+'</button></div>'+
+    (b.fixedCosts>0?'':'<p class="warnbox">Todavía no hay gastos fijos: cargá cuánto pagás por mes (alquiler, sueldos, servicios) para saber cuánto tenés que vender para no perder.</p>')+be+'</section>';
 }
 
 /* ============================================================
@@ -1056,7 +1065,7 @@ function stockTable(){
   L.forEach(function(x){if(admin){totCost+=Math.max(x.stock,0)*(x.cost||0);totSale+=Math.max(x.stock,0)*x.price;}});
   var rows=shown.map(function(x){
     var chip=x.stock<=0?'<span class="chip bad">Sin stock</span>':lowStock(x)?'<span class="chip warn">Poco stock</span>':'';
-    if(x.expires){var d=diffDays(x.expires);if(d<0)chip+=' <span class="chip bad">Vencido el '+fmtDate(x.expires)+'</span>';else if(d<=EXPIRY_DAYS)chip+=' <span class="chip warn">Vence el '+fmtDate(x.expires)+'</span>';}
+    if(x.expires){var d=diffDays(x.expires);if(d<0)chip+=' <span class="chip bad">Vencido el '+fmtDate(x.expires)+'</span>';else if(d<=expiryDays())chip+=' <span class="chip warn">Vence el '+fmtDate(x.expires)+'</span>';}
     if(x.isGift)chip+=' <span class="chip info">Regalo</span>';
     var stockCell='<span class="stk"><span>'+fmtQty(x.stock,x.unit)+'</span><button data-action="stock-add" data-id="'+x.id+'" aria-label="Llegó mercadería de '+esc(x.name)+'" title="Llegó mercadería">+</button></span>';
     var bag=x.packKg&&x.looseId?'<button class="link" data-action="open-bag" data-id="'+x.id+'">Abrir bolsa</button>':'';
@@ -1408,10 +1417,12 @@ function viewServicios(){
    Agenda de peluquería y baño
    ============================================================ */
 var WEEKDAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
-var apptLabel=function(a){return a.time+' · '+esc(a.pet)+' ('+esc(a.clientLast)+')';};
+var apptLabel=function(a){return a.time+' · '+(a.reminder?esc(a.title):esc(a.pet)+' ('+esc(a.clientLast)+')');};
+// Recordatorio sin cliente: «Hecho» en vez de «Entregado».
+var apptStatusLabel=function(a){return a.reminder&&a.status==='entregado'?'Hecho':APPT_LABEL[a.status];};
 function dayAppts(iso){return (ui.appts||[]).filter(function(a){return a.date===iso;}).sort(function(a,b){return a.time.localeCompare(b.time);});}
 var active=function(a){return a.status!=='cancelado'&&a.status!=='no_vino';};
-function apptBtn(a){return '<button class="appt st-'+a.status+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+esc(a.service||'Sin servicio')+(a.staff?' · '+esc(a.staff):'')+'</small></button>';}
+function apptBtn(a){return '<button class="appt st-'+a.status+(a.reminder?' reminder':'')+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'<small>'+(a.reminder?'Recordatorio':esc(a.service||'Sin servicio'))+(a.staff?' · '+esc(a.staff):'')+'</small></button>';}
 function calDayColumn(iso){
   var d=parse(iso),isToday=iso===todayIso();
   return '<div class="cal-day'+(isToday?' today':'')+'"><div class="cal-day-head"><button class="link daylink" data-action="cal-day" data-v="'+iso+'"><span>'+WEEKDAYS[(d.getDay()+6)%7]+'</span> <b>'+d.getDate()+'</b></button>'+
@@ -1423,8 +1434,8 @@ function calMonthGrid(){
     var list=dayAppts(d),out=d.slice(0,7)!==cur,isToday=d===todayIso();
     cells+='<div class="cal-mday'+(out?' out':'')+(isToday?' today':'')+(list.length||isToday?' has':'')+'"><div class="mhead"><button class="link daylink" data-action="cal-day" data-v="'+d+'">'+WEEKDAYS[(parse(d).getDay()+6)%7]+' '+Number(d.slice(8,10))+'</button>'+
       '<button class="cal-add" data-action="cal-add-day" data-v="'+d+'" aria-label="Agregar turno el '+fmtDate(d)+'">+</button></div>'+
-      list.slice(0,3).map(function(a){return '<button class="cal-chip st-'+a.status+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';}).join('')+
-      (list.length>3?'<button class="cal-more" data-action="cal-day" data-v="'+d+'">+'+(list.length-3)+' más</button>':'')+'</div>';
+      list.slice(0,list.length>3?2:3).map(function(a){return '<button class="cal-chip st-'+a.status+(a.reminder?' reminder':'')+'" data-action="appt-view" data-id="'+a.id+'">'+apptLabel(a)+'</button>';}).join('')+
+      (list.length>3?'<button class="cal-more" data-action="cal-more" data-v="'+d+'">+'+(list.length-2)+' más</button>':'')+'</div>';
     d=shiftDays(1,d);
   }
   return '<div class="calscroll"><div class="cal-month">'+cells+'</div></div>';
@@ -1447,9 +1458,9 @@ function calDayGrid(){
   });
   var n=Math.max(1,cols.length);
   var blocks=act.map(function(a){
-    var s=toMin(a.time),clash=act.some(function(b){return b!==a&&s<toMin(b.time)+b.duration&&toMin(b.time)<s+a.duration;});
-    return '<button class="appt grid st-'+a.status+(clash?' clash':'')+'" data-action="appt-view" data-id="'+a.id+'" style="top:'+((s-open)/SLOT*PX)+'px;height:'+Math.max(PX*0.8,a.duration/SLOT*PX-3)+'px;left:calc('+(a._col/n*100)+'% + 2px);width:calc('+(100/n)+'% - 4px)">'+
-      (clash?'<b class="clashtag">Se pisa</b>':'')+apptLabel(a)+'<small>'+esc(a.service||'Sin servicio')+' · hasta '+a.endTime+(a.staff?' · '+esc(a.staff):'')+' · '+esc(APPT_LABEL[a.status])+'</small></button>';
+    var s=toMin(a.time),clash=!a.reminder&&act.some(function(b){return b!==a&&!b.reminder&&s<toMin(b.time)+b.duration&&toMin(b.time)<s+a.duration;});
+    return '<button class="appt grid st-'+a.status+(clash?' clash':'')+(a.reminder?' reminder':'')+'" data-action="appt-view" data-id="'+a.id+'" style="top:'+((s-open)/SLOT*PX)+'px;height:'+Math.max(PX*0.8,a.duration/SLOT*PX-3)+'px;left:calc('+(a._col/n*100)+'% + 2px);width:calc('+(100/n)+'% - 4px)">'+
+      (clash?'<b class="clashtag">Se pisa</b>':'')+apptLabel(a)+'<small>'+(a.reminder?'Recordatorio':esc(a.service||'Sin servicio'))+' · hasta '+a.endTime+(a.staff?' · '+esc(a.staff):'')+' · '+esc(apptStatusLabel(a))+'</small></button>';
   }).join('');
   var gone=list.filter(function(a){return !active(a);});
   return (h?'':'<p class="warnbox">Según el horario comercial, este día el local está cerrado.</p>')+
@@ -1463,7 +1474,8 @@ function viewAgenda(){
   if(ui.cal.view==='month')body=calMonthGrid();
   else if(ui.cal.view==='day')body=calDayGrid();
   else{var r=calRange(),cells='',d=r[0];while(d<=r[1]){cells+=calDayColumn(d);d=shiftDays(1,d);}body='<div class="calscroll"><div class="cal-week fit">'+cells+'</div></div>';}
-  return '<section class="farm"><div class="head"><h1>Agenda de turnos</h1><button class="btn primary" data-action="new-appt">Nuevo turno</button></div>'+
+  if(ui.calLoading)body='<div class="calbody loading" aria-busy="true">'+body+'</div>';
+  return '<section class="farm"><div class="head"><h1>Agenda de turnos</h1><div class="hbtns"><button class="btn" data-action="new-reminder">Nuevo recordatorio</button><button class="btn primary" data-action="new-appt">Nuevo turno</button></div></div>'+
     '<div class="cal-head"><div class="cal-nav"><button data-action="cal-prev" aria-label="Anterior">‹</button><button class="btn" data-action="cal-today">'+({day:'Hoy',week:'Semana',month:'Mes'}[ui.cal.view]||'Hoy')+'</button><button data-action="cal-next" aria-label="Siguiente">›</button></div>'+
     '<div class="cal-title" aria-live="polite">'+calTitle()+'</div>'+segHTML('cal-view',APPT_VIEWS,ui.cal.view,'Vista')+'</div>'+
     '<div class="cal-legend">'+APPT_STATUS.map(function(s){return '<span><i class="st-'+s[0]+'"></i>'+s[1]+'</span>';}).join('')+'</div>'+body+'</section>';
@@ -1597,7 +1609,7 @@ function viewCaja(){
 function usagePanel(){
   var u=ui.usage;if(!u)return '';
   var p=Math.min(100,Math.round(u.bytes/u.limit*100));
-  return '<section class="sec"><h2 class="h3">Espacio de la base de datos</h2><p><b>'+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>(plan gratuito; las copias guardadas ocupan '+fmtBytes(u.backupBytes)+')</small></p>'+
+  return '<section class="sec"><h2 class="h3">Espacio de la base de datos</h2><p><b>'+fmtBytes(u.bytes)+' de '+fmtBytes(u.limit)+'</b> <small>(las copias guardadas ocupan '+fmtBytes(u.backupBytes)+')</small></p>'+
     '<div class="meter'+(p>=80?' hot':'')+'" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+p+'" aria-label="Espacio usado"><i style="width:'+Math.max(p,1)+'%"></i></div>'+
     (p>=80?'<p class="warnbox">Queda poco espacio. Descargá una copia y borrá copias guardadas viejas, o pasá a un plan pago de la base de datos.</p>':'')+'</section>';
 }
@@ -1610,12 +1622,62 @@ function viewBackups(){
       '<div class="racts"><button class="link" data-action="restore" data-id="'+b.id+'">Restaurar</button><span class="sep"></span><button class="link bad" data-action="del-backup" data-id="'+b.id+'">Eliminar</button></div></div>';
   }).join(''):'<p class="empty">Todavía no hay copias guardadas.</p>';
   return '<section class="farm"><div class="head"><h1>Copias de seguridad</h1></div>'+
-    '<p class="warnbox">La base de datos gratuita no incluye copias propias. Por eso el sistema guarda una copia por día dentro de la misma base (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, <b>por lo menos una vez por semana</b>: el sistema te lo recuerda en el Resumen.'+
+    '<p class="warnbox">El sistema no guarda copias fuera de esta base de datos. Por eso guarda una copia por día dentro de la misma base (te sirve si borrás algo por error), pero <b>si se perdiera la base, esas copias también se pierden</b>. Descargá un archivo a tu computadora o a un pendrive, <b>por lo menos una vez por semana</b>: el sistema te lo recuerda en el Resumen.'+
     (d===null?' Todavía no descargaste ninguno desde esta computadora.':' La última descarga desde esta computadora fue hace '+plural(d,'día','días')+'.')+'</p>'+
     '<div class="cashbox" style="margin-top:1rem"><div class="panel"><h2 class="h3">Copia automática diaria</h2><p>'+(lastAuto?'Última: '+fmtTs(lastAuto.createdAt)+'.':'Todavía no se hizo ninguna.')+' Se hace sola una vez por día y se conservan las últimas 7.</p></div>'+
     '<div class="panel"><h2 class="h3">Archivo y copias manuales</h2><div class="filerow"><button class="btn primary" data-action="backup-download" data-v="gz">Descargar copia comprimida</button><button class="btn" data-action="backup-download" data-v="json">Descargar en JSON</button><button class="btn" data-action="backup-now">Crear copia ahora</button><button class="btn" data-action="pick-file">Cargar desde archivo</button><input id="bfile" type="file" accept=".json,.gz,application/json,application/gzip" hidden></div>'+
     '<p>La copia comprimida (.json.gz) pesa mucho menos. Para comprobar que tus copias sirven, seguí la «prueba de restauración» del README una vez por mes.</p></div></div>'+
     usagePanel()+'<section class="sec"><h2 class="h3">Copias guardadas en el sistema</h2><div class="bk-list">'+rows+'</div></section></section>';
+}
+/* ============================================================
+   Configuración del negocio (solo el dueño)
+   Datos del negocio, alertas de stock, gastos fijos del punto de equilibrio, formas de pago, horario y el informe
+   semanal. Es el lugar para cualquier parámetro operativo que hoy esté fijo en el sistema.
+   ============================================================ */
+function viewConfig(){
+  var st=S.settings,hours=st.hours||{},rep=st.report||{};
+  var day=function(d){var h=hours[d];return '<div class="hrow"><span>'+WEEKDAYS_LONG[d]+'</span>'+
+    '<label class="check"><input type="checkbox" name="open_'+d+'"'+(h?' checked':'')+'> Abre</label>'+
+    '<input type="time" name="from_'+d+'" value="'+(h?h[0]:'09:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': apertura">'+
+    '<input type="time" name="to_'+d+'" value="'+(h?h[1]:'19:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': cierre"></div>';};
+  var checks=function(name,all,on){return '<div class="checkgrid">'+all.map(function(x){return '<label class="check"><input type="checkbox" name="'+name+'" value="'+esc(x)+'"'+(on.indexOf(x)>=0?' checked':'')+'> '+esc(x)+'</label>';}).join('')+'</div>';};
+  return '<section class="farm"><div class="head"><h1>Configuración</h1><div class="hbtns"><button class="btn primary" data-action="config-save">Guardar cambios</button></div></div>'+
+    '<form id="cfgform" class="cfg" novalidate>'+
+    '<section class="panel" id="cfg-negocio"><h2 class="h3">Datos del negocio</h2><div class="fields">'+
+      fld('Nombre del negocio','shopName',{value:st.shopName||S.shop,req:true,maxlength:100})+fld('Teléfono','phone',{value:st.phone,maxlength:50,inputmode:'tel'})+
+      fld('Dirección','address',{value:st.address,full:true,maxlength:200})+
+      fld('Texto al pie del ticket','ticketText',{value:st.ticketText,full:true,maxlength:200})+fld('Ancho del ticket','ticketWidth',{opts:[[80,'80 mm'],[58,'58 mm']],value:st.ticketWidth||80})+'</div></section>'+
+    '<section class="panel" id="cfg-stock"><h2 class="h3">Alertas de stock</h2><div class="fields">'+
+      fld('Stock mínimo que se propone al cargar un producto','defaultMinStock',{type:'number',min:0,step:'0.001',value:st.defaultMinStock!=null?st.defaultMinStock:2,req:true,hint:'Cada producto tiene su propio mínimo (se cambia al editarlo); este es el valor de partida.'})+
+      fld('Avisar vencimientos con cuántos días de anticipación','expiryDays',{type:'number',min:1,max:365,step:'1',value:st.expiryDays||30,req:true})+'</div></section>'+
+    '<section class="panel" id="cfg-fijos"><h2 class="h3">Gastos fijos (punto de equilibrio)</h2>'+
+      '<p class="note2">El Resumen → Proyección calcula cuánto tenés que vender para cubrir los gastos fijos. Podés cargar el monto mensual o dejarlo en 0 para que se calcule con los egresos de las categorías marcadas.</p><div class="fields">'+
+      fld('Gastos fijos por mes','fixedMonthly',{type:'number',min:0,step:'0.01',value:st.fixedMonthly||0,inputmode:'decimal',hint:'Ej.: alquiler + sueldos + servicios. 0 = calcularlos con la caja.'})+
+      fld('Margen bajo (para marcar en rojo), en %','lowMargin',{type:'number',min:0,max:100,step:'0.1',value:st.lowMargin!=null?st.lowMargin:10,req:true})+
+      '<div class="fld full"><span>Categorías de egresos que son gastos fijos</span>'+checks('fixedCategories',CASH_OUT_CATS,st.fixedCategories||[])+'</div>'+
+      fld('Cliente perdido: días sin comprar','lostDays',{type:'number',min:7,max:365,step:'1',value:st.lostDays||30,req:true})+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Formas de pago habilitadas</h2>'+checks('methods',ALL_PAY,st.methods||ALL_PAY)+'</section>'+
+    '<section class="panel"><h2 class="h3">Horario de atención</h2><p class="note2">La agenda avisa si un turno queda fuera de este horario.</p><div class="hours">'+[1,2,3,4,5,6,0].map(day).join('')+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Informe semanal por email</h2>'+(st.emailReady?'':'<p class="warnbox">El envío de emails no está configurado en el servidor (faltan EMAIL_PROVIDER, EMAIL_API_KEY y EMAIL_FROM en Render). Podés dejarlo listo y se va a enviar cuando se configure.</p>')+
+      '<div class="fields">'+fld('Enviar el informe de la semana todos los lunes','repEnabled',{type:'checkbox',value:!!rep.enabled,full:true})+
+      fld('Hora de envío','repHour',{type:'number',min:0,max:23,step:'1',value:rep.hour!=null?rep.hour:8})+
+      fld('Destinatarios (separados por coma)','repTo',{value:rep.recipients,full:true,maxlength:500,ph:'Ej.: duena@gmail.com'})+'</div></section>'+
+    '<p class="err" role="alert" id="cfgerr"></p></form></section>';
+}
+async function saveConfig(){
+  var f=$('#cfgform'),err=$('#cfgerr');err.textContent='';
+  if(!validateForm(f)){err.textContent='Revisá los campos marcados.';throw Object.assign(new Error('Revisá los campos marcados.'),{cancelled:true});}
+  var v=function(n){var el=f.querySelector('[name="'+n+'"]');return el?el.value:'';};
+  var all=function(n){return Array.prototype.map.call(f.querySelectorAll('[name="'+n+'"]:checked'),function(x){return x.value;});};
+  var hours={};[0,1,2,3,4,5,6].forEach(function(d){hours[d]=f.querySelector('[name="open_'+d+'"]').checked?[v('from_'+d),v('to_'+d)]:null;});
+  var rep=S.settings.report||{};
+  var body={shopName:v('shopName'),address:v('address'),phone:v('phone'),ticketText:v('ticketText'),ticketWidth:Number(v('ticketWidth')),hours:hours,methods:all('methods'),
+    fixedCategories:all('fixedCategories'),fixedMonthly:v('fixedMonthly')||0,lowMargin:v('lowMargin'),lostDays:v('lostDays'),defaultMinStock:v('defaultMinStock'),expiryDays:v('expiryDays'),
+    report:{enabled:f.querySelector('[name="repEnabled"]').checked,weekday:rep.weekday!=null?rep.weekday:1,hour:Number(v('repHour')),recipients:v('repTo')}};
+  try{var r=await api('/settings',{method:'PUT',body:body});}
+  catch(e){err.textContent=e.message;throw e;}
+  S.settings=Object.assign({},S.settings,r);S.shop=r.shopName||S.shop;document.title=S.shop;$('#shopname').textContent=S.shop;
+  ui.sum.proj=null;render();toast('Configuración guardada');
 }
 function viewUsers(){
   var tabs='<div class="tabs" role="tablist"><button class="tab" role="tab" data-action="utab" data-v="users" aria-selected="'+(ui.utab==='users')+'">Usuarios</button><button class="tab" role="tab" data-action="utab" data-v="actividad" aria-selected="'+(ui.utab==='actividad')+'">Actividad</button></div>';
@@ -1637,20 +1699,20 @@ function auditHTML(){
   var rows=A.items.map(function(x){
     return '<tr><td>'+fmtTs(x.at)+'</td><td>'+esc(x.user||'—')+'</td><td><b>'+esc(x.action)+'</b><small>'+esc(x.entity)+(x.entityId?' #'+x.entityId:'')+'</small></td><td class="auditd">'+(x.before?'<small>Antes: '+show(x.before)+'</small>':'')+(x.after?'<small>Después: '+show(x.after)+'</small>':'')+'</td><td>'+esc(x.reason)+'</td></tr>';
   }).join('');
-  return '<p class="note2">Registro de solo lectura de las acciones sensibles: cambios de precio, anulaciones, stock, caja, cierres, usuarios y configuración.</p>'+
+  return '<p class="note2">Registro de solo lectura de las acciones sensibles: precios cambiados y anulaciones de ventas; ingresos, gastos, egresos eliminados y cierres de caja; productos y stock; altas y bajas de clientes y proveedores; usuarios (altas, cambios y desactivaciones); copias de seguridad y configuración.</p>'+
     '<div class="toolbar">'+rangeHTML('afrom','ato',ui.afrom,ui.ato)+'<label class="inl">Usuario <select id="auser"><option value="">Todos</option>'+users+'</select></label><label class="inl">Acción <select id="aaction"><option value="">Todas</option>'+acts+'</select></label></div>'+
     (rows?'<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Acción</th><th>Detalle</th><th>Motivo</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">No hay actividad con esos filtros.</p>');
 }
 function render(){
   if(!S.user)return;
-  var adminOnly={caja:1,copias:1,usuarios:1};
+  var adminOnly={caja:1,copias:1,usuarios:1,configuracion:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='vender';
   if(ui.view!=='vender'&&stripScanner){stripScanner.stop();stripScanner=null;}
   if(ui.view==='vender'&&stripScanner&&stripScanner.box.parentNode)stripScanner.box.parentNode.removeChild(stripScanner.box);
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='resumen'?viewResumen():v==='vender'?viewVender():v==='ventas'?viewVentas():v==='stock'?viewStock():v==='servicios'?viewServicios():
-    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():viewUsers();
+    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():v==='configuracion'?viewConfig():viewUsers();
   labelTables();
   if(v==='vender'){mountStrip();saveDraft();if(ui.draftNote){ui.draftNote=false;toast('Recuperamos tu venta en curso.');}}
 }
@@ -1686,7 +1748,7 @@ function addPreview(f,fn){
 
 function productForm(x,preset,then){
   var admin=isAdmin(),isNew=!x;
-  x=x||Object.assign({category:'Alimento balanceado',unit:'u',min:2,price:'',cost:'',barcodes:[]},preset||{});
+  x=x||Object.assign({category:'Alimento balanceado',unit:'u',min:S.settings.defaultMinStock!=null?S.settings.defaultMinStock:2,price:'',cost:'',barcodes:[]},preset||{});
   var codes=(x.barcodes&&x.barcodes.length?x.barcodes:x.barcode?[x.barcode]:[]);
   var looseOpts=[['','No se abre para vender suelto']].concat(S.products.filter(function(p){return p.unit==='kg'&&(!x.id||p.id!==x.id);}).map(function(p){return [p.id,prodLabel(p)];}));
   var pf=openForm({title:isNew?'Nuevo producto':'Editar '+esc(x.name),
@@ -1727,9 +1789,13 @@ function productForm(x,preset,then){
   var syncUnit=function(){var st=qtyStep(unitSel.value);pf.querySelectorAll('[name="min"],[name="stock"]').forEach(function(i){i.step=st;});bagset.hidden=unitSel.value!=='u';};
   unitSel.addEventListener('change',syncUnit);syncUnit();
   // Margen en vivo y aviso de pérdida (solo el dueño ve el costo).
+  // El aviso de precio $ 0 aparece recién cuando se tocó el precio o se intentó guardar, no al abrir el formulario.
+  var priceIn=pf.querySelector('[name="price"]'),priceTouched=!isNew;
+  priceIn.addEventListener('blur',function(){priceTouched=true;pf.dispatchEvent(new Event('change'));});
+  pf.addEventListener('submit',function(){priceTouched=true;pf.dispatchEvent(new Event('change'));},true);
   addPreview(pf,function(){
-    var p=Number(pf.querySelector('[name="price"]').value),co=pf.querySelector('[name="cost"]'),c=co?Number(co.value):0,gift=!!x.isGift,per=unitSel.value==='kg'?'kilo':'unidad';
-    if(!(p>0))return gift?'Regalo/promoción: se puede vender a $ 0.':{html:'El precio de venta no puede ser $ 0 (salvo regalo/promoción).',bad:true};
+    var p=Number(priceIn.value),co=pf.querySelector('[name="cost"]'),c=co?Number(co.value):0,gift=!!x.isGift,per=unitSel.value==='kg'?'kilo':'unidad';
+    if(!(p>0)){if(gift)return 'Regalo/promoción: se puede vender a $ 0.';return priceTouched?{html:'El precio de venta no puede ser $ 0 (salvo regalo/promoción).',bad:true}:'';}
     if(c>0&&p<c)return {html:'Con este precio perdés '+money(c-p)+' por '+per+' (margen '+pct((p-c)/p*100)+').',bad:true};
     if(c>0)return 'Ganás '+money(p-c)+' por '+per+' · margen '+pct((p-c)/p*100)+'.';
     return admin?'Cargá el costo para ver tu margen.':'';
@@ -1922,15 +1988,21 @@ function waDialog(name,phone,text){
 }
 
 /* ---------- Turnos ---------- */
-function appointmentForm(a,presetDate,presetPet,presetTime){
+/**
+ * Turno (con mascota) o recordatorio sin cliente («llamar al distribuidor a las 15», «turno a confirmar»).
+ * El recordatorio solo pide título y horario; un turno con servicio del catálogo sigue necesitando la mascota (se le cobra).
+ */
+function appointmentForm(a,presetDate,presetPet,presetTime,reminder){
   var isNew=!a;
   var pets=[];S.clients.forEach(function(c){c.pets.forEach(function(p){pets.push([p.id,p.name+' ('+c.name+')']);});});
-  if(!pets.length){toast('Primero cargá un cliente con su mascota en «Clientes».',true);return;}
   pets.sort(function(x,y){return collator.compare(x[1],y[1]);});
-  a=a||{date:presetDate||todayIso(),time:presetTime||'10:00',duration:60,status:'reservado',petId:presetPet||'',staff:''};
+  a=a||{date:presetDate||todayIso(),time:presetTime||'10:00',duration:reminder?15:60,status:'reservado',petId:presetPet||'',staff:'',reminder:!!reminder||!pets.length,title:''};
+  var rem=!!a.reminder;
   var svOpts=[['','Sin servicio definido']].concat(S.services.map(function(s){return [s.id,s.name+' · '+money(s.price)];}));
-  var f=openForm({title:isNew?'Nuevo turno':'Editar turno',
-    body:'<div class="fields">'+fld('Mascota','petId',{opts:pets,value:a.petId,full:true,req:true})+fld('Servicio','serviceId',{opts:svOpts,value:a.serviceId,full:true})+
+  var f=openForm({title:isNew?(rem?'Nuevo recordatorio':'Nuevo turno'):(rem?'Editar recordatorio':'Editar turno'),
+    body:'<div class="fields">'+fld('Tipo','kind',{opts:[['turno','Turno de una mascota'],['recordatorio','Recordatorio sin cliente']],value:rem?'recordatorio':'turno',full:true})+
+      '<div class="kind-turno full fields">'+(pets.length?fld('Mascota','petId',{opts:pets,value:a.petId,full:true,req:!rem}):'<p class="note2 full">Todavía no hay mascotas cargadas: para un turno, primero cargá el cliente en «Clientes».</p>')+fld('Servicio','serviceId',{opts:svOpts,value:a.serviceId,full:true})+'</div>'+
+      '<div class="kind-recordatorio full fields">'+fld('Título','title',{value:a.title,full:true,maxlength:120,req:rem,ph:'Ej.: Llamar al distribuidor'})+'</div>'+
       fld('Fecha','date',{type:'date',value:a.date,req:true})+fld('Hora','time',{type:'time',value:a.time,req:true,step:'300'})+
       fld('Duración (minutos)','duration',{type:'number',min:5,max:600,step:'5',value:a.duration,req:true})+fld('Estado','status',{opts:APPT_FORM_STATUS.concat(APPT_FORM_STATUS.some(function(x){return x[0]===a.status;})?[]:[[a.status,APPT_LABEL[a.status]||a.status]]),value:a.status})+
       fld('Asignar personal (opcional)','staff',{value:a.staff,list:'stafflist',maxlength:60,ph:'Ej.: Ana'})+
@@ -1938,11 +2010,22 @@ function appointmentForm(a,presetDate,presetPet,presetTime){
       '<datalist id="stafflist">'+(ui.staffNames||[]).map(function(n){return '<option value="'+esc(n)+'">';}).join('')+'</datalist>',
     submit:isNew?'Agendar turno':'Guardar cambios',
     onSubmit:async function(d){
-      var body={petId:Number(d.petId),serviceId:d.serviceId?Number(d.serviceId):null,date:d.date,time:d.time,duration:Number(d.duration),status:d.status,notes:d.notes,staff:d.staff};
+      var isRem=d.kind==='recordatorio';
+      if(!isRem&&!d.petId)throw new Error('Elegí la mascota del turno (o cambiá el tipo a «Recordatorio sin cliente»).');
+      var body={petId:isRem?null:Number(d.petId),serviceId:!isRem&&d.serviceId?Number(d.serviceId):null,title:isRem?d.title:'',date:d.date,time:d.time,duration:Number(d.duration),status:d.status,notes:d.notes,staff:d.staff};
       if(isNew)await apiConfirm('/appointments',{body:body});else await apiConfirm('/appointments/'+a.id,{method:'PUT',body:body});
       if(ui.view==='agenda')await reloadCal();else await reload();
-      toast(isNew?'Turno agendado':'Turno guardado');
+      toast(isRem?(isNew?'Recordatorio agendado':'Recordatorio guardado'):(isNew?'Turno agendado':'Turno guardado'));
     }});
+  var kindSel=f.querySelector('[name="kind"]');
+  function showKind(){
+    var r=kindSel.value==='recordatorio';
+    f.querySelector('.kind-turno').hidden=r;f.querySelector('.kind-recordatorio').hidden=!r;
+    var pet=f.querySelector('[name="petId"]');if(pet)pet.required=!r;
+    f.querySelector('[name="title"]').required=r;
+    f.querySelector('h2').textContent=(isNew?(r?'Nuevo recordatorio':'Nuevo turno'):(r?'Editar recordatorio':'Editar turno'));
+  }
+  kindSel.addEventListener('change',showKind);showKind();
   f.querySelector('[name="serviceId"]').addEventListener('change',function(e){var s=servById(e.target.value);if(s)f.querySelector('[name="duration"]').value=s.duration;});
 }
 async function setApptStatus(a,status){
@@ -1951,10 +2034,10 @@ async function setApptStatus(a,status){
   status=(r&&r.status)||status;
   dlg.close();await reloadCal();
   // Al terminar un turno sin cobrar, se ofrece cobrarlo.
-  if((status==='listo'||status==='entregado')&&!a.saleId){
+  if((status==='listo'||status==='entregado')&&!a.saleId&&!a.reminder){
     var ch=await choiceDialog(esc(a.pet)+': '+esc(APPT_LABEL[status]),'<p>¿Querés cobrar el servicio ahora?</p>',[{label:'Más tarde',value:null,cls:'ghost'},{label:'Cobrar'+(a.servicePrice!=null?' '+money(a.servicePrice):''),value:'ok',cls:'primary'}]);
     if(ch==='ok')chargeAppt(a);
-  }else toast('Turno: '+APPT_LABEL[status]);
+  }else toast((a.reminder?'Recordatorio: ':'Turno: ')+apptStatusLabel({reminder:a.reminder,status:status}));
 }
 // Cobrar un turno: arma la venta con el servicio, el cliente y la mascota, y lleva a "Vender".
 function chargeAppt(a){
@@ -1963,7 +2046,24 @@ function chargeAppt(a){
   ui.cart.clientId=String(a.clientId);ui.cart.petId=String(a.petId);ui.cart.apptId=a.id;
   if(dlg.open)dlg.close();go('vender');
 }
+function reminderDetails(a){
+  var open=a.status==='reservado'||a.status==='confirmado'||a.status==='en_curso';
+  var btns=[];
+  if(open)btns.push({label:'Marcar como hecho',cls:'primary',fn:function(){return setApptStatus(a,'entregado');}});
+  if(open)btns.push({label:'Cancelar',fn:function(){return setApptStatus(a,'cancelado');}});
+  btns.push({label:'Editar',fn:function(){dlg.close();appointmentForm(a);}});
+  btns.push({label:'Eliminar',cls:'danger-o',fn:function(){
+    confirmForm('Eliminar recordatorio','Se elimina «'+esc(a.title)+'» del '+fmtDate(a.date)+' a las '+a.time+'. No se puede deshacer.','Eliminar',async function(){await api('/appointments/'+a.id,{method:'DELETE'});await reloadCal();toast('Recordatorio eliminado');});
+  }});
+  infoDialog(esc(a.title)+' · '+a.time+' hs',
+    '<div class="apptinfo"><div class="apptrow"><span>Tipo</span><b>Recordatorio sin cliente</b></div>'+
+    '<div class="apptrow"><span>Fecha y hora</span><b>'+fmtDate(a.date)+' de '+a.time+' a '+a.endTime+'</b></div>'+
+    '<div class="apptrow"><span>Estado</span><span><span class="chip st-'+a.status+'">'+esc(apptStatusLabel(a))+'</span></span></div>'+
+    (a.staff?'<div class="apptrow"><span>Personal</span><b>'+esc(a.staff)+'</b></div>':'')+
+    (a.notes?'<div class="apptrow"><span>Notas</span><b>'+esc(a.notes)+'</b></div>':'')+'</div>',btns);
+}
 function appointmentDetails(a){
+  if(a.reminder)return reminderDetails(a);
   var tel=String(a.phone||'').replace(/[^\d+]/g,'');
   var open=a.status==='reservado'||a.status==='confirmado'||a.status==='en_curso';
   var btns=[];
@@ -2104,6 +2204,7 @@ var actions={
   'sum-period':function(id,b){ui.sum.period=b.dataset.v;if(b.dataset.v!=='range')store.set('petshop_period',b.dataset.v);if(b.dataset.v==='range'&&!(ui.sum.from&&ui.sum.to)){render();return;}clearSumData();return refreshView();},
   'sum-tab':function(id,b){ui.sum.tab=b.dataset.v;return refreshView();},
   'sum-sub':function(id,b){ui.sum.sub=b.dataset.v;render();},
+  'sum-more':function(id,b){ui.sum.more=b.dataset.v;render();},
   'sum-topby':function(id,b){ui.sum.topBy=b.dataset.v;render();},
   'sum-pgroup':function(id,b){ui.sum.pgroup=b.dataset.v;ui.sum.products=null;return refreshView();},
   'sum-psort':function(id,b){var s=ui.sum.psort||{k:'profit',d:-1};ui.sum.psort={k:b.dataset.v,d:s.k===b.dataset.v?-s.d:(b.dataset.v==='name'?1:-1)};render();},
@@ -2199,6 +2300,13 @@ var actions={
   },
   // Agenda
   'new-appt':function(){appointmentForm(null,ui.cal.anchor);},
+  'new-reminder':function(){appointmentForm(null,ui.cal.anchor,null,null,true);},
+  // "+N más" en la vista Mes: muestra los turnos de ese día sin salir del mes.
+  'cal-more':function(id,b){
+    var d=b.dataset.v;
+    infoDialog(fmtDate(d),'<div class="daylist">'+dayAppts(d).map(apptBtn).join('')+'</div>',[{label:'Ver el día',cls:'primary',fn:function(){dlg.close();ui.cal.anchor=d;ui.cal.view='day';return reloadCal();}}]);
+    dlg.querySelectorAll('[data-action="appt-view"]').forEach(function(x){x.addEventListener('click',function(){var a=byId(ui.appts,x.dataset.id);if(a)appointmentDetails(a);});});
+  },
   'cal-add-day':function(id,b){appointmentForm(null,b.dataset.v);},
   'cal-add-slot':function(id,b){appointmentForm(null,ui.cal.anchor,null,b.dataset.v);},
   'appt-view':function(id){var a=byId(ui.appts,id);if(a)appointmentDetails(a);},
@@ -2218,11 +2326,13 @@ var actions={
   },
   'cash-in':function(){cashForm('in');},
   'cash-out':function(){cashForm('out');},
+  // Como «Anular venta»: el motivo es obligatorio y queda en el registro de actividad con quién y cuándo.
   'del-cash':function(id){
     var c=byId(ui.cash&&ui.cash.items,id),d=c?c.stockDelta:0;
-    confirmForm('Eliminar movimiento','Se borra este movimiento de la caja.'+(d<0?' Como era una compra de mercadería, también se resta del stock lo que se había sumado.':'')+' No se puede deshacer y queda en el registro de actividad.','Eliminar',async function(){
-      await api('/cash/'+id,{method:'DELETE'});await reload();toast('Movimiento eliminado');
-    });
+    openForm({title:'Eliminar movimiento',danger:true,submit:'Eliminar',
+      body:'<p>Se borra '+(c?'«'+esc(c.concept)+'» ('+money(c.amount)+')':'este movimiento')+' de la caja.'+(d<0?' Como era una compra de mercadería, también se resta del stock lo que se había sumado.':'')+' No se puede deshacer y queda en el registro de actividad.</p><div class="fields">'+
+        fld('Motivo','reason',{full:true,req:true,minlength:3,ph:'Ej.: se cargó dos veces'})+'</div>',
+      onSubmit:async function(x){await api('/cash/'+id+'?reason='+encodeURIComponent(x.reason),{method:'DELETE'});await reload();toast('Movimiento eliminado');}});
   },
   'cash-close':async function(){
     var v=$('#close-counted').value,note=$('#close-note').value;
@@ -2255,6 +2365,9 @@ var actions={
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm(byId(ui.users,id));},
   'change-pass':function(){passwordForm();},
+  'config-save':function(){return saveConfig();},
+  // Resumen → Proyección → Punto de equilibrio: directo a los gastos fijos de la Configuración.
+  'goto-fixed':async function(){await go('configuracion');var el=$('#cfg-fijos');if(el){el.scrollIntoView({block:'start'});var i=el.querySelector('[name="fixedMonthly"]');if(i)i.focus();}},
   // Proveedores
   'new-supplier':function(){supplierForm();},
   'edit-supplier':function(id){supplierForm(byId(ui.suppliers,id));},
@@ -2294,6 +2407,7 @@ document.addEventListener('toggle',function(e){
   var d=e.target;
   if(d.id==='cfilters'){ui.cfopen=d.open;return;}
   if(d.id==='monthsbox'){ui.sum.monthsOpen=d.open;return;}
+  if(d.id==='cmpmore'){ui.sum.cmpOpen=d.open;return;}
   if(!d.classList||!d.classList.contains('rowmenu')||!d.open)return;
   document.querySelectorAll('details.rowmenu[open]').forEach(function(o){if(o!==d)o.open=false;});
   var m=d.querySelector('.menu'),r=d.getBoundingClientRect();

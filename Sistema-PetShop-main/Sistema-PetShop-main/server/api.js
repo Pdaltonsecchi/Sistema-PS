@@ -160,6 +160,11 @@ const DEFAULT_SETTINGS = {
   fixedCategories: ['Alquiler y servicios', 'Sueldos', 'Impuestos'],
   lowMargin: 10,
   lostDays: 30,
+  // Alertas de stock: mínimo que se propone al cargar un producto y con cuántos días de anticipación avisar un vencimiento.
+  defaultMinStock: 2,
+  expiryDays: 30,
+  // Gastos fijos del mes para el punto de equilibrio. 0 = se calculan con los egresos de las categorías marcadas.
+  fixedMonthly: 0,
   report: { enabled: false, weekday: 1, hour: 8, recipients: '' },
 };
 let settingsCache = null;
@@ -179,6 +184,18 @@ async function getSettings(q) {
 }
 
 /* ---------- Registro de auditoría ---------- */
+/** Todas las acciones que quedan en la actividad (el filtro «Acción» las ofrece aunque todavía no haya pasado ninguna). */
+const AUDIT_ACTIONS = [
+  'Precio manual', 'Anulación de venta',
+  'Ingreso de caja', 'Gasto de caja', 'Egreso de caja eliminado', 'Ingreso de caja eliminado', 'Cierre de caja',
+  'Alta de producto', 'Edición de producto', 'Baja de producto', 'Actualización de precios', 'Código asociado', 'Reasignación de código',
+  'Ingreso de mercadería', 'Ingreso por escáner', 'Ingreso deshecho', 'Ajuste de stock',
+  'Alta de servicio', 'Cambio de precio de servicio',
+  'Alta de cliente', 'Baja de cliente', 'Alta de proveedor', 'Baja de proveedor',
+  'Alta de usuario', 'Edición de usuario', 'Usuario desactivado', 'Usuario reactivado',
+  'Copia manual creada', 'Copia eliminada', 'Copia restaurada', 'Copia restaurada desde archivo',
+  'Cambio de configuración',
+];
 const auditJson = (v) => (v == null ? null : JSON.stringify(v));
 /** Deja constancia de una acción sensible: quién, cuándo, qué cambió y por qué. `q` es la base o la transacción. */
 async function audit(q, ctx, action, entity, entityId, before, after, reason) {
@@ -262,7 +279,7 @@ async function cashSummary() {
 async function autoReady(q) {
   await q.query(
     "UPDATE appointments SET status = 'listo', started_at = COALESCE(started_at, now()), finished_at = COALESCE(finished_at, now()) " +
-      "WHERE status = 'confirmado' AND confirmed_at IS NOT NULL " +
+      "WHERE status = 'confirmado' AND confirmed_at IS NOT NULL AND pet_id IS NOT NULL " +
       "AND (on_date + at_time + duration_min * interval '1 minute') <= (now() AT TIME ZONE 'America/Argentina/Buenos_Aires') " +
       "AND (confirmed_at AT TIME ZONE 'America/Argentina/Buenos_Aires') < (on_date + at_time + duration_min * interval '1 minute')"
   );
@@ -439,7 +456,9 @@ add('PATCH', '/api/users/:id', { admin: true }, async (ctx) => {
   const newPw = b.password !== undefined && b.password !== '';
   if (newPw) hash = await auth.hashPassword(checkPassword(b.password));
   await db.query('UPDATE users SET name = $1, role = $2, active = $3, password_hash = $4 WHERE id = $5', [name, role, active, hash, id]);
-  await audit(db, ctx, 'Edición de usuario', 'usuario', id, { name: cur.name, role: cur.role, active: !!cur.active }, { name, role, active, passwordChanged: newPw });
+  // Desactivar no borra al usuario (sigue en el historial): queda como su propia acción en la actividad.
+  const action = !!cur.active === active ? 'Edición de usuario' : active ? 'Usuario reactivado' : 'Usuario desactivado';
+  await audit(db, ctx, action, 'usuario', id, { name: cur.name, role: cur.role, active: !!cur.active }, { name, role, active, passwordChanged: newPw });
 });
 
 
@@ -465,8 +484,8 @@ add('GET', '/api/bootstrap', async (ctx) => {
    ============================================================ */
 // El empleado no necesita ver la configuración del informe por email ni los umbrales de ganancia.
 function publicSettings(s, admin) {
-  const out = { shopName: s.shopName, address: s.address, phone: s.phone, ticketText: s.ticketText, ticketWidth: s.ticketWidth, hours: s.hours, methods: s.methods };
-  if (admin) Object.assign(out, { fixedCategories: s.fixedCategories, lowMargin: s.lowMargin, lostDays: s.lostDays, report: s.report, emailReady: report.configured() });
+  const out = { shopName: s.shopName, address: s.address, phone: s.phone, ticketText: s.ticketText, ticketWidth: s.ticketWidth, hours: s.hours, methods: s.methods, expiryDays: s.expiryDays, defaultMinStock: s.defaultMinStock };
+  if (admin) Object.assign(out, { fixedCategories: s.fixedCategories, fixedMonthly: s.fixedMonthly, lowMargin: s.lowMargin, lostDays: s.lostDays, report: s.report, emailReady: report.configured() });
   return out;
 }
 add('GET', '/api/settings', async (ctx) => publicSettings(await getSettings(), isAdmin(ctx)));
@@ -492,6 +511,9 @@ add('PUT', '/api/settings', { admin: true }, async (ctx) => {
     fixedCategories: fixed,
     lowMargin: U.reqNum(b.lowMargin == null || b.lowMargin === '' ? cur.lowMargin : b.lowMargin, 'Margen bajo', 0, 100),
     lostDays: U.reqInt(b.lostDays == null || b.lostDays === '' ? cur.lostDays : b.lostDays, 'Días sin comprar', 7, 365),
+    defaultMinStock: U.reqNum(b.defaultMinStock == null || b.defaultMinStock === '' ? cur.defaultMinStock : b.defaultMinStock, 'Stock mínimo sugerido', 0, 100000),
+    expiryDays: U.reqInt(b.expiryDays == null || b.expiryDays === '' ? cur.expiryDays : b.expiryDays, 'Días de aviso de vencimiento', 1, 365),
+    fixedMonthly: U.money(b.fixedMonthly == null || b.fixedMonthly === '' ? cur.fixedMonthly : b.fixedMonthly, 'Gastos fijos del mes'),
     report: {
       enabled: !!rep.enabled,
       weekday: U.reqInt(rep.weekday == null ? 1 : rep.weekday, 'Día del informe', 0, 6),
@@ -537,8 +559,9 @@ add('GET', '/api/audit', { admin: true }, async (ctx) => {
       return null;
     }
   };
+  const known = new Set(AUDIT_ACTIONS);
   return {
-    actions: acts.rows.map((x) => x.action),
+    actions: AUDIT_ACTIONS.concat(acts.rows.map((x) => x.action).filter((a) => !known.has(a))),
     items: r.rows.map((x) => ({ id: x.id, at: x.at, user: x.user_name, action: x.action, entity: x.entity, entityId: x.entity_id, before: parse(x.before), after: parse(x.after), reason: x.reason })),
   };
 });
@@ -558,4 +581,4 @@ require('./routes/people')(H);
 require('./routes/summary')(H);
 require('./routes/backups')(H);
 
-module.exports = { dispatch, routes, getSettings, clearSettingsCache: () => (settingsCache = null), weeklyTick: () => (H.weeklyTick ? H.weeklyTick() : Promise.resolve()) };
+module.exports = { dispatch, routes, AUDIT_ACTIONS, getSettings, clearSettingsCache: () => (settingsCache = null), weeklyTick: () => (H.weeklyTick ? H.weeklyTick() : Promise.resolve()) };

@@ -114,15 +114,16 @@ function findConflicts(a, others) {
       o.id !== a.id &&
       o.date === a.date &&
       !INACTIVE.includes(o.status) &&
-      (o.petId === a.petId || (normStaff(a.staff) && normStaff(o.staff) === normStaff(a.staff))) &&
+      ((a.petId != null && o.petId === a.petId) || (normStaff(a.staff) && normStaff(o.staff) === normStaff(a.staff))) &&
       overlaps(a.time, a.duration, o.time, o.duration)
   );
 }
 
 /** Cualquier turno activo del mismo día que se pise con `a` (sin importar la mascota ni el personal): para avisar de un choque de horario. */
+// Los recordatorios sin mascota no ocupan a nadie: no avisan ni se avisan.
 function findOverlaps(a, others) {
-  if (INACTIVE.includes(a.status)) return [];
-  return others.filter((o) => o.id !== a.id && o.date === a.date && !INACTIVE.includes(o.status) && overlaps(a.time, a.duration, o.time, o.duration));
+  if (INACTIVE.includes(a.status) || a.petId == null) return [];
+  return others.filter((o) => o.id !== a.id && o.petId != null && o.date === a.date && !INACTIVE.includes(o.status) && overlaps(a.time, a.duration, o.time, o.duration));
 }
 
 // Horario comercial por día de la semana (0 = domingo). null = cerrado.
@@ -172,28 +173,33 @@ function breakEven(fixedCosts, margin) {
   return U.round2(Number(fixedCosts) / (margin / 100));
 }
 /**
- * Proyección del mes: ritmo del mes en curso vs. promedio de los últimos 3 meses.
+ * Proyección del mes: lo ya vendido (y gastado) es real; solo se proyectan los días que faltan.
+ * Ritmo esperado por día = promedio entre el ritmo de este mes y el de los últimos 3 meses (o solo el de este mes si
+ * no hay historia). Los escenarios cambian ese ritmo para los días que faltan:
+ *   Prudente  = el menor entre los dos ritmos y el esperado × 0,85 (vende menos, gasta más).
+ *   Optimista = el mayor entre los dos ritmos y el esperado × 1,15 (vende más, gasta menos).
+ * Así los tres valores difieren siempre que falten días, y se juntan a fin de mes.
  * m: { sales, expenses, day, daysInMonth, avgSales, avgExpenses }
  */
+const SCENARIO = { low: 0.85, high: 1.15 };
 function projectMonth(m) {
-  const day = Math.max(1, m.day);
-  const paceS = (m.sales / day) * m.daysInMonth;
-  const paceE = (m.expenses / day) * m.daysInMonth;
-  const hasAvg = m.avgSales > 0 || m.avgExpenses > 0;
-  const mix = (a, b) => (hasAvg ? (a + b) / 2 : a);
-  const sales = {
-    expected: U.round2(mix(paceS, m.avgSales)),
-    optimistic: U.round2(hasAvg ? Math.max(paceS, m.avgSales) : paceS),
-    prudent: U.round2(hasAvg ? Math.min(paceS, m.avgSales) : paceS),
+  const day = Math.max(1, Math.min(m.day, m.daysInMonth));
+  const left = Math.max(0, m.daysInMonth - day);
+  const rates = (done, avg) => {
+    const pace = done / day;
+    const hist = avg > 0 ? avg / m.daysInMonth : null;
+    const expected = hist == null ? pace : (pace + hist) / 2;
+    const all = hist == null ? [pace] : [pace, hist];
+    return { expected, low: Math.min(...all, expected * SCENARIO.low), high: Math.max(...all, expected * SCENARIO.high) };
   };
-  // Lo ya vendido y gastado no puede "desaparecer": las proyecciones nunca son menores a lo real.
-  Object.keys(sales).forEach((k) => (sales[k] = Math.max(sales[k], U.round2(m.sales))));
-  const expenses = {
-    expected: Math.max(U.round2(mix(paceE, m.avgExpenses)), U.round2(m.expenses)),
-    optimistic: Math.max(U.round2(hasAvg ? Math.min(paceE, m.avgExpenses) : paceE), U.round2(m.expenses)),
-    prudent: Math.max(U.round2(hasAvg ? Math.max(paceE, m.avgExpenses) : paceE), U.round2(m.expenses)),
+  const s = rates(m.sales, m.avgSales);
+  const e = rates(m.expenses, m.avgExpenses);
+  const at = (done, rate) => U.round2(done + rate * left);
+  return {
+    sales: { prudent: at(m.sales, s.low), expected: at(m.sales, s.expected), optimistic: at(m.sales, s.high) },
+    expenses: { prudent: at(m.expenses, e.high), expected: at(m.expenses, e.expected), optimistic: at(m.expenses, e.low) },
+    daysLeft: left,
   };
-  return { sales, expenses };
 }
 /** Día del mes en que se alcanza `target` al ritmo actual (null si no se alcanza este mes). */
 function reachDay(sold, target, day, daysInMonth) {
@@ -224,10 +230,21 @@ function lostClients(rows, today, minDays) {
 }
 
 const DOW = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
-/** Frase con la franja de 2 horas que más vende. cells: [{ dow, hour, n, total }]. */
-function peakPhrase(cells) {
+/** Mínimo de datos para hablar de un patrón de horarios (con menos, cualquier "pico" es casualidad). */
+const PEAK_MIN = { sales: 20, days: 7 };
+/** ¿Alcanzan los datos para decir cuál es la franja pico? days = días distintos con ventas. */
+const peakReliable = (sales, days) => sales >= PEAK_MIN.sales && days >= PEAK_MIN.days;
+/**
+ * Frase con la franja de 2 horas que más vende. cells: [{ dow, hour, n, total }].
+ * Con `o` ({ sales, days }) y pocos datos, en vez de afirmar un patrón avisa cuántos datos faltan.
+ */
+function peakPhrase(cells, o) {
   const all = cells.reduce((s, c) => s + Number(c.total), 0);
   if (!all) return '';
+  if (o && !peakReliable(o.sales, o.days)) {
+    return 'Todavía no hay suficientes datos para detectar un patrón confiable: hacen falta al menos ' + PEAK_MIN.sales + ' ventas en ' + PEAK_MIN.days +
+      ' días distintos (en este período hay ' + o.sales + (o.sales === 1 ? ' venta' : ' ventas') + ' en ' + o.days + (o.days === 1 ? ' día' : ' días') + ').';
+  }
   const by = {};
   cells.forEach((c) => (by[c.dow + '-' + c.hour] = Number(c.total)));
   let best = null;
@@ -295,6 +312,6 @@ function checkProductPrice(price, cost, isGift, confirmLoss) {
 
 module.exports = {
   priceSale, splitPayments, overlaps, findConflicts, findOverlaps, withinHours, checkHours, DEFAULT_HOURS, weekday,
-  pctChange, marginPct, breakEven, projectMonth, reachDay, lostClients, peakPhrase,
+  pctChange, marginPct, breakEven, projectMonth, reachDay, lostClients, peakPhrase, peakReliable, PEAK_MIN,
   csvCell, csvDoc, normalizeBarcode, gtinValid, checkProductPrice, fmtMoney,
 };

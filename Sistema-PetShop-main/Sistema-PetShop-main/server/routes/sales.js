@@ -358,6 +358,9 @@ module.exports = function (H) {
   // Los ingresos de una venta no se eliminan acá: se anula la venta (así también vuelve el stock).
   add('DELETE', '/api/cash/:id', { admin: true }, async (ctx) => {
     const id = U.idParam(ctx.params.id);
+    // Motivo obligatorio, como al anular una venta (queda en la actividad con quién y cuándo).
+    const reason = U.optStr(ctx.query.get('reason'), 200, 'Motivo');
+    if (reason.length < 3) throw U.bad('Escribí el motivo para eliminar el movimiento (al menos 3 letras).');
     return db.tx(async (c) => {
       const r = await c.query('SELECT * FROM cash_movements WHERE id = $1 FOR UPDATE', [id]);
       if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese movimiento. Recargá la página.');
@@ -367,7 +370,7 @@ module.exports = function (H) {
       const stockDelta = await revertStockMovements(c, mv.rows.map((x) => x.id), ctx.user.id);
       await c.query('DELETE FROM cash_movements WHERE id = $1', [id]);
       const x = r.rows[0];
-      await audit(c, ctx, 'Movimiento de caja eliminado', 'caja', id, { date: x.on_date, kind: x.kind, concept: x.concept, method: x.method, amount: Number(x.amount) }, null);
+      await audit(c, ctx, x.kind === 'out' ? 'Egreso de caja eliminado' : 'Ingreso de caja eliminado', 'caja', id, { date: x.on_date, kind: x.kind, concept: x.concept, category: x.category, method: x.method, amount: Number(x.amount), stockDelta }, null, reason);
       return { ok: true, stockDelta };
     });
   });

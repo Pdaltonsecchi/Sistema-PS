@@ -162,11 +162,27 @@ function apptRules(existing) {
   return [
     [/SELECT id FROM pets WHERE id/, [{ id: 1 }]],
     [/SELECT id FROM services WHERE id/, [{ id: 1 }]],
-    [/FROM appointments a JOIN pets pt ON pt.id = a.pet_id WHERE a.on_date = \$1/, existing || []],
+    [/FROM appointments a LEFT JOIN pets pt ON pt.id = a.pet_id WHERE a.on_date = \$1/, existing || []],
     [/INSERT INTO appointments/, [{ id: 50 }]],
   ];
 }
 const future = '2099-06-01'; // lunes
+
+test('agenda: un recordatorio sin cliente se agenda sin mascota, con título, y no choca con turnos', async () => {
+  reset(apptRules([{ id: 7, pet_id: 2, on_date: future, at_time: '15:00:00', duration_min: 60, status: 'reservado', staff: '', pet: 'Firu' }]));
+  const sinTitulo = await call('staff', 'POST', '/api/appointments', { date: future, time: '15:00', duration: 15 });
+  assert.equal(sinTitulo.status, 400);
+  assert.match(sinTitulo.body.error, /Título del recordatorio/);
+  const conServicio = await call('staff', 'POST', '/api/appointments', { title: 'Llamar', serviceId: 1, date: future, time: '15:00' });
+  assert.equal(conServicio.status, 400);
+  assert.match(conServicio.body.error, /elegí la mascota/);
+  // A la misma hora que un turno: no avisa de choque (un recordatorio no ocupa a nadie) ni pide confirmar el horario.
+  const r = await call('staff', 'POST', '/api/appointments', { title: 'Llamar al distribuidor', date: future, time: '15:00', duration: 15 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const ins = state.log.find((x) => /INSERT INTO appointments/.test(x.sql));
+  assert.equal(ins.params[0], null);
+  assert.equal(ins.params[8], 'Llamar al distribuidor');
+});
 
 test('agenda: no se reserva en una fecha pasada (sí se carga como entregado)', async () => {
   reset(apptRules());
@@ -260,4 +276,35 @@ test('mensajes de validación en lenguaje natural', async () => {
   assert.equal(r.body.error, 'Completá «Nombre».');
   const d = await call('staff', 'POST', '/api/sales', { method: 'Efectivo', items: [{ type: 'product', id: 1 }], discount: { type: 'x', value: 5 } });
   assert.ok(!/Valor inválido/.test(d.body.error));
+});
+
+test('actividad: toda acción que se registra figura en el filtro «Acción» (la pantalla no promete de más)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', 'server');
+  const files = ['api.js'].concat(fs.readdirSync(path.join(dir, 'routes')).map((f) => path.join('routes', f)));
+  const used = new Set();
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    for (const m of src.matchAll(/audit\(\w+, ctx, '([^']+)'/g)) used.add(m[1]);
+    for (const m of src.matchAll(/\? '([^']+)' : '([^']+)'(?=, '(?:caja|usuario)')/g)) used.add(m[1]).add(m[2]);
+  }
+  ['Egreso de caja eliminado', 'Ingreso de caja eliminado', 'Cierre de caja', 'Copia restaurada', 'Copia eliminada', 'Usuario desactivado', 'Baja de proveedor', 'Alta de cliente', 'Cambio de configuración']
+    .forEach((a) => assert.ok(api.AUDIT_ACTIONS.includes(a), a));
+  const missing = [...used].filter((a) => !api.AUDIT_ACTIONS.includes(a));
+  assert.deepEqual(missing, []);
+});
+
+test('caja: eliminar un egreso pide motivo y queda en la actividad con quién lo eliminó', async () => {
+  reset([[/SELECT \* FROM cash_movements WHERE id = \$1 FOR UPDATE/, [{ id: 4, on_date: '2026-10-01', kind: 'out', concept: 'Compra Royal', category: 'Compra de mercadería', method: 'Efectivo', amount: 90000 }]]]);
+  const sin = await call('admin', 'DELETE', '/api/cash/4');
+  assert.equal(sin.status, 400);
+  assert.match(sin.body.error, /motivo/);
+  const r = await call('admin', 'DELETE', '/api/cash/4?reason=' + encodeURIComponent('se cargó dos veces'));
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const a = state.log.find((x) => /INSERT INTO audit_log/.test(x.sql));
+  assert.equal(a.params[1], 'Dueña QA');
+  assert.equal(a.params[2], 'Egreso de caja eliminado');
+  assert.equal(a.params[7], 'se cargó dos veces');
+  assert.match(a.params[5], /Compra Royal/);
 });

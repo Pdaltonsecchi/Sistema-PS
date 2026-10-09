@@ -276,6 +276,9 @@ INSERT INTO product_barcodes (code, product_id) SELECT barcode, id FROM products
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS staff TEXT NOT NULL DEFAULT '';
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+-- Recordatorios sin cliente («llamar al distribuidor»): sin mascota, con un título.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
+ALTER TABLE appointments ALTER COLUMN pet_id DROP NOT NULL;
 
 -- Envíos del informe semanal por email (con el error, si lo hubo).
 CREATE TABLE IF NOT EXISTS report_log (

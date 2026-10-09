@@ -70,3 +70,8 @@ test('el service worker nunca guarda respuestas de /api', () => {
   assert.match(sw, /\/api\//);
   assert.match(sw, /startsWith\('\/api\/'\)\)\s*return/);
 });
+
+test('Copias de seguridad: la pantalla no menciona el plan gratuito', () => {
+  assert.doesNotMatch(app, /plan gratuito|base de datos gratuita/i);
+  assert.match(app, /El sistema no guarda copias fuera de esta base de datos\. Por eso guarda una copia por día dentro de la misma base/);
+});

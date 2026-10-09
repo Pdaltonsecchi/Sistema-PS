@@ -363,7 +363,9 @@ module.exports = function (H) {
     };
   });
   add('POST', '/api/suppliers', { admin: true }, async (ctx) => {
-    const r = await db.query('INSERT INTO suppliers (name, phone, email, description, phone_norm) VALUES ($1, $2, $3, $4, $5) RETURNING id', supplierInput(ctx.body));
+    const v = supplierInput(ctx.body);
+    const r = await db.query('INSERT INTO suppliers (name, phone, email, description, phone_norm) VALUES ($1, $2, $3, $4, $5) RETURNING id', v);
+    await audit(db, ctx, 'Alta de proveedor', 'proveedor', r.rows[0].id, null, { name: v[0], phone: v[1] });
     return { id: r.rows[0].id };
   });
   add('PUT', '/api/suppliers/:id', { admin: true }, async (ctx) => {
@@ -374,6 +376,8 @@ module.exports = function (H) {
     if (!r.rows[0]) throw new HttpError(404, 'No encontramos ese proveedor. Recargá la página.');
   });
   add('DELETE', '/api/suppliers/:id', { admin: true }, async (ctx) => {
-    await db.query('DELETE FROM suppliers WHERE id = $1', [U.idParam(ctx.params.id)]);
+    const id = U.idParam(ctx.params.id);
+    const r = await db.query('DELETE FROM suppliers WHERE id = $1 RETURNING name', [id]);
+    if (r.rows[0]) await audit(db, ctx, 'Baja de proveedor', 'proveedor', id, { name: r.rows[0].name }, null);
   });
 };
