@@ -150,8 +150,10 @@ module.exports = function (H) {
   });
 
   /**
-   * Ingreso de mercadería (botón + o escáner). Cualquier usuario puede sumar unidades que llegaron; el costo, el
-   * proveedor y el egreso en caja son información del dueño: si un empleado los manda, se rechaza.
+   * Ingreso de mercadería (botón + o escáner). Cualquier usuario puede sumar unidades que llegaron.
+   * El empleado puede decir cuánto pagó en total (`paid`) y con qué: se registra el egreso en caja y el costo por unidad,
+   * y queda en la actividad, pero no ve la caja ni el costo anterior. El precio por unidad, el proveedor y la fecha
+   * siguen siendo del dueño: si un empleado los manda, se rechaza.
    */
   add('POST', '/api/products/:id/purchase', async (ctx) => {
     const id = U.idParam(ctx.params.id);
@@ -161,12 +163,14 @@ module.exports = function (H) {
     if (!prod) throw new HttpError(404, 'No encontramos ese producto. Recargá la página.');
     const qty = U.qty(b.qty, 'Cantidad que entra', prod.unit);
     const noPrice = b.unitPrice == null || b.unitPrice === '';
-    if (!admin && (!noPrice || b.cash)) throw new HttpError(403, 'Solo el dueño o administrador carga costos y gastos de caja. Sumá la cantidad y listo.', { code: 'admin_only' });
+    if (!admin && (!noPrice || b.cash || b.supplierId || b.date)) throw new HttpError(403, 'Solo el dueño o administrador carga el precio por unidad, el proveedor y la fecha. Sumá la cantidad y, si pagaste, cuánto.', { code: 'admin_only' });
     if (noPrice && b.cash) throw U.bad('Escribí el precio de compra para registrar el gasto en caja (o destildá «Registrar como egreso en caja»).');
-    const unitPrice = noPrice ? 0 : U.moneyPos(b.unitPrice, 'Precio de compra');
-    const cost = U.round2(unitPrice * qty);
+    // Empleado: lo que pagó en total por lo que llegó (vacío = no pagó en el momento).
+    const paid = !admin && b.paid != null && b.paid !== '' ? U.moneyPos(b.paid, 'Cuánto pagaste') : 0;
+    const unitPrice = paid > 0 ? U.round2(paid / qty) : noPrice ? 0 : U.moneyPos(b.unitPrice, 'Precio de compra');
+    const cost = paid > 0 ? paid : U.round2(unitPrice * qty);
     const date = admin && b.date ? U.pastDate(b.date, 'Fecha de compra') : U.todayAR();
-    const toCash = admin && !!b.cash && cost > 0;
+    const toCash = (admin ? !!b.cash : paid > 0) && cost > 0;
     const method = toCash ? U.oneOf(b.method, U.METHODS, 'Forma de pago') : null;
     const supplierId = admin ? await optSupplier(db, b.supplierId) : null;
     const expires = U.optDate(b.expires, 'Vencimiento');

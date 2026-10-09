@@ -1216,7 +1216,7 @@ function ingestScanner(){
         '<label class="fld full" for="iq"><span>Cantidad que entra'+(p.unit==='kg'?' (kg)':'')+'</span><span class="qtybox big"><button type="button" class="qbtn" data-q="-">−</button><input id="iq" type="number" min="'+step+'" step="'+step+'" value="1" inputmode="decimal"><button type="button" class="qbtn" data-q="+">+</button></span></label>'+
         (admin?fld('Costo por '+(p.unit==='kg'?'kilo':'unidad'),'icost',{type:'number',min:0,step:'0.01',value:p.cost||''})+fld('Proveedor','isup',{opts:supplierOpts(),value:p.supplierId})+
           fld('Vencimiento (opcional)','iexp',{type:'date'})+fld('Forma de pago','imethod',{opts:PAY(),value:'Transferencia'})+fld('Registrar la compra como egreso en caja','icash',{type:'checkbox',full:true}):
-          fld('Vencimiento (opcional)','iexp',{type:'date'}))+
+          fld('Vencimiento (opcional)','iexp',{type:'date'})+fld('¿Cuánto pagaste en total? (vacío si no pagaste ahora)','ipaid',{type:'number',min:0.01,step:'0.01',inputmode:'decimal'})+fld('Forma de pago','imethod',{opts:PAY(),value:'Efectivo'}))+
       '</div><p class="err" role="alert"></p><div class="actions"><button type="button" class="btn ghost" data-x="skip">Otro producto</button><button type="button" class="btn primary" data-x="add">Sumar al stock</button></div>';
     var q=card_.querySelector('#iq');q.focus();q.select();
     card_.querySelectorAll('[data-q]').forEach(function(b){b.addEventListener('click',function(){var v=Number(q.value)||0,s=Number(step);v=b.dataset.q==='+'?v+(p.unit==='kg'?1:s):v-(p.unit==='kg'?1:s);q.value=Math.max(Number(step),r3(v));});});
@@ -1228,6 +1228,7 @@ function ingestScanner(){
       var body={qty:qty,viaScanner:true,expires:(card_.querySelector('[name="iexp"]')||{}).value||''};
       if(admin){var c=card_.querySelector('[name="icost"]').value;body.unitPrice=c;body.supplierId=card_.querySelector('[name="isup"]').value||null;body.cash=card_.querySelector('[name="icash"]').checked;body.method=card_.querySelector('[name="imethod"]').value;
         if(body.cash&&!(Number(c)>0)){err.textContent='Para registrar el egreso en caja escribí el costo.';return;}}
+      else{var pd=card_.querySelector('[name="ipaid"]').value;if(pd!==''){body.paid=pd;body.method=card_.querySelector('[name="imethod"]').value;}}
       btn.disabled=true;btn.classList.add('busy');
       try{
         var r=await api('/products/'+p.id+'/purchase',{body:body});
@@ -1569,7 +1570,7 @@ function viewUsers(){
     return '<tr><td><b>'+esc(u.name)+'</b><small>'+esc(u.email)+'</small></td><td>'+(u.role==='admin'?'Dueño / administrador':'Empleado')+'</td><td>'+(u.active?'<span class="chip ok">Activo</span>':'<span class="chip none">Desactivado</span>')+'</td><td class="act"><button class="link" data-action="edit-user" data-id="'+u.id+'">Editar</button></td></tr>';
   }).join('');
   return '<section class="farm"><div class="head"><h1>Usuarios y actividad</h1><button class="btn primary" data-action="new-user">Nuevo usuario</button></div>'+tabs+
-    '<p class="note2">El dueño ve todo. El empleado vende (al precio de lista), ingresa mercadería, abre bolsas y maneja la agenda y los clientes, pero no ve costos, ganancias, caja, copias ni usuarios, y no puede cambiar precios ni anular ventas. El sistema lo controla en el servidor, no solo en la pantalla.</p>'+
+    '<p class="note2">El dueño ve todo. El empleado vende (al precio de lista), ingresa mercadería (y anota lo que pagó, que entra como egreso en caja), abre bolsas y maneja la agenda y los clientes, pero no ve costos, ganancias, caja, copias ni usuarios, y no puede cambiar precios ni anular ventas. El sistema lo controla en el servidor, no solo en la pantalla.</p>'+
     '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th><span class="sr-only">Acciones</span></th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
 }
 function auditHTML(){
@@ -1700,19 +1701,22 @@ function productForm(x,preset,then){
     if(!bcIn.value)bcIn.value=code;else{codes.push(code);toast('Código agregado al producto.');}
   });
 }
-// Llegó mercadería. El empleado solo suma la cantidad (y el vencimiento); el costo y la caja son del dueño.
+// Llegó mercadería. El empleado suma la cantidad y, si pagó, cuánto pagó en total: se registra como egreso en caja
+// (él no ve la caja ni el costo). El precio por unidad, el proveedor y la fecha son del dueño.
+var STAFF_PAID_FIELDS=function(){return fld('¿Cuánto pagaste en total? (vacío si no pagaste ahora)','paid',{type:'number',min:0.01,step:'0.01',inputmode:'decimal'})+fld('Forma de pago','method',{opts:PAY(),value:'Efectivo'});};
 function buyForm(x){
   var admin=isAdmin();
   var f=openForm({title:'Llegó mercadería: '+esc(x.name),
     body:'<div class="fields">'+fld('Cantidad que llegó'+(x.unit==='kg'?' (kg)':''),'qty',{type:'number',min:qtyStep(x.unit),step:qtyStep(x.unit),value:1,req:true,inputmode:'decimal'})+
       (admin?fld('Precio de compra por '+(x.unit==='kg'?'kilo':'unidad'),'unitPrice',{type:'number',min:0.01,step:'0.01',value:x.cost||'',inputmode:'decimal'})+
         fld('Forma de pago','method',{opts:PAY(),value:'Transferencia'})+fld('Fecha','date',{type:'date',value:todayIso(),max:todayIso(),req:true})+
-        fld('Proveedor','supplierId',{opts:supplierOpts(),value:x.supplierId}):'')+
+        fld('Proveedor','supplierId',{opts:supplierOpts(),value:x.supplierId}):STAFF_PAID_FIELDS())+
       fld('Vencimiento de este lote (opcional)','expires',{type:'date'})+
       (admin?fld('Registrar como egreso en caja','cash',{type:'checkbox',value:true,full:true}):'')+'</div><p>Stock actual: '+fmtQty(x.stock,x.unit)+'.'+(admin?' El precio de compra pasa a ser el costo del producto.':'')+'</p>',
     submit:'Agregar al stock',
     onSubmit:async function(d){
       var body={qty:d.qty,expires:d.expires};
+      if(!admin&&d.paid!==''){body.paid=d.paid;body.method=d.method;}
       if(admin){
         if(d.cash&&!(Number(d.unitPrice)>0))throw new Error('Escribí el precio de compra para registrar el egreso en caja (o destildá «Registrar como egreso en caja»).');
         var cost=r2(Number(d.qty)*Number(d.unitPrice||0));
@@ -1721,7 +1725,7 @@ function buyForm(x){
       }
       var r=await api('/products/'+x.id+'/purchase',{body:body});
       await reload();
-      toast('Se agregaron '+fmtQty(Number(d.qty),x.unit)+' al stock'+(r.cost>0&&d.cash?' · egreso de '+money(r.cost):'')+(r.costChanged?' · nuevo costo '+money(r.costChanged.after)+' (margen '+pct(r.costChanged.margin)+')':''));
+      toast('Se agregaron '+fmtQty(Number(d.qty),x.unit)+' al stock'+(r.cost>0&&(d.cash||body.paid)?' · egreso de '+money(r.cost):'')+(r.costChanged?' · nuevo costo '+money(r.costChanged.after)+' (margen '+pct(r.costChanged.margin)+')':''));
     }});
   if(admin)addPreview(f,function(){var n=Number(f.querySelector('[name="qty"]').value),p=Number(f.querySelector('[name="unitPrice"]').value);return n>0&&p>0?'Total de la compra: '+money(r2(n*p)):'';});
 }

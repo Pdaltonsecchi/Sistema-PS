@@ -98,7 +98,7 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 ## El día a día
 
 - **Vender:** pantalla *Vender* (o botón *Vender* en cada producto del Stock). Con un **lector de código de barras USB** solo pasás el producto: se suma solo a la venta. Con el celular usá **Escanear con la cámara** (hace falta abrir el sistema con https, como en Render). Detalle y prueba paso a paso: [`docs/escaner.md`](docs/escaner.md).
-- **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja.
+- **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja. El empleado también lo usa: anota la cantidad y, si pagó en el momento, cuánto pagó en total y con qué; eso entra como egreso en caja y queda en *Actividad* (él sigue sin ver la caja ni los costos).
 - **Qué pedir:** *Stock → Para pedir* te arma el pedido por proveedor; **Copiar pedido** o **Enviar por WhatsApp**.
 - **Peluquería:** agendá el turno en *Agenda* (con quién lo atiende); cuando está listo, tocá el turno → **Listo para retirar** → **Cobrar**. Dos turnos que se superponen se avisan pero se pueden agendar igual.
 - **Recordatorios:** *Agenda → Nuevo recordatorio* sirve para anotar algo sin cliente ni mascota (por ejemplo «Llamar al distribuidor»). Un turno con un servicio del catálogo sigue pidiendo la mascota.

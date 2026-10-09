@@ -108,3 +108,8 @@ test('la pantalla Ventas ya no existe; el detalle de una venta sigue en Caja y e
   assert.ok((app.match(/data-action="sale-view"/g) || []).length >= 2, 'Caja («Ver venta») y Clientes («Ver»)');
   assert.match(app, /btns\.push\(\{label:'Anular venta'/, 'el dueño puede seguir anulando desde el detalle');
 });
+
+test('Llegó mercadería: el empleado puede anotar cuánto pagó (formulario y escáner)', () => {
+  assert.match(app, /if\(!admin&&d\.paid!==''\)\{body\.paid=d\.paid;body\.method=d\.method;\}/);
+  assert.match(app, /var pd=card_\.querySelector\('\[name="ipaid"\]'\)\.value;if\(pd!==''\)\{body\.paid=pd;/);
+});
