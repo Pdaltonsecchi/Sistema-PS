@@ -94,3 +94,17 @@ test('desactivar un usuario explica que no se borra', () => {
   assert.match(app, /no podrá iniciar sesión, pero sigue apareciendo en el registro de actividad e historial\. No se elimina de forma permanente/);
   assert.match(app, /if\(u\.active&&!d\.active&&!await confirmDeactivate\(u\)\)/);
 });
+
+test('Resumen: la pestaña General muestra solo el Panorama', () => {
+  const g = app.slice(app.indexOf('function sumGeneral(){'), app.indexOf('function sumPanorama('));
+  assert.match(g, /return sumPanorama\(D\);/);
+  assert.doesNotMatch(app, /data-action="sum-sub"|sum-more|function comparePanel|function hoursPanel|function sumEvolucion/);
+  assert.doesNotMatch(app.slice(app.indexOf('async function loadSummary'), app.indexOf('async function loadView')), /summary\/(hours|compare|monthly)/, 'no pide datos que ya no se muestran');
+});
+
+test('la pantalla Ventas ya no existe; el detalle de una venta sigue en Caja y en la ficha del cliente', () => {
+  assert.doesNotMatch(app, /\['ventas','Ventas'/);
+  assert.doesNotMatch(app, /function viewVentas|id="salesq"/);
+  assert.ok((app.match(/data-action="sale-view"/g) || []).length >= 2, 'Caja («Ver venta») y Clientes («Ver»)');
+  assert.match(app, /btns\.push\(\{label:'Anular venta'/, 'el dueño puede seguir anulando desde el detalle');
+});
