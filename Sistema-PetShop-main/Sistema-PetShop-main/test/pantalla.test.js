@@ -42,3 +42,29 @@ test('Resumen: al cambiar el filtro, una respuesta vieja que llega tarde se desc
   await Promise.all([load('rango ene-oct', 40), load('este mes', 5)]);
   assert.deepEqual(shown, ['este mes']);
 });
+
+function fakeEl() {
+  const cls = new Set(), attrs = {};
+  return { cls, attrs, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) }, setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } };
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('cargando: lo rápido no parpadea, lo lento muestra el aviso y siempre se quita', async () => {
+  const fast = fakeEl();
+  assert.equal(await R.busyWhile(fast, wait(5).then(() => 'ok'), 40), 'ok');
+  await wait(60);
+  assert.equal(fast.cls.has('busy'), false, 'una respuesta rápida nunca muestra el círculo');
+
+  const slow = fakeEl();
+  const p = R.busyWhile(slow, wait(80), 20);
+  await wait(40);
+  assert.equal(slow.cls.has('busy'), true);
+  assert.equal(slow.attrs['aria-busy'], 'true');
+  await p;
+  assert.equal(slow.cls.has('busy'), false);
+  assert.equal(slow.attrs['aria-busy'], undefined);
+
+  const bad = fakeEl();
+  await assert.rejects(R.busyWhile(bad, wait(40).then(() => { throw new Error('falló'); }), 10), /falló/);
+  assert.equal(bad.cls.has('busy'), false, 'si falla también se quita');
+});

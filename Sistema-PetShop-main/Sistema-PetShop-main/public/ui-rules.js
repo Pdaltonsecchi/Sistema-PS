@@ -47,5 +47,16 @@
     return {next:function(){return ++n;},isCurrent:function(t){return t===n;}};
   }
 
-  return {labelStep:labelStep,labelCount:labelCount,posEnterAction:posEnterAction,looksLikeCode:looksLikeCode,latest:latest};
+  /**
+   * Un solo patrón de «cargando»: si la promesa tarda más de `delay` ms, `el` recibe la clase busy y aria-busy
+   * (los botones muestran el círculo, la pantalla una barra arriba); al terminar, bien o mal, se quitan.
+   * Lo rápido no parpadea.
+   */
+  function busyWhile(el,p,delay){
+    var t=setTimeout(function(){if(el){el.classList.add('busy');el.setAttribute('aria-busy','true');}},delay==null?150:delay);
+    var done=function(){clearTimeout(t);if(el){el.classList.remove('busy');el.removeAttribute('aria-busy');}};
+    return Promise.resolve(p).then(function(v){done();return v;},function(e){done();throw e;});
+  }
+
+  return {busyWhile:busyWhile,labelStep:labelStep,labelCount:labelCount,posEnterAction:posEnterAction,looksLikeCode:looksLikeCode,latest:latest};
 });

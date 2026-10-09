@@ -348,6 +348,8 @@ function choiceDialog(title,html,buttons){
     var p=d.querySelector('.btn.primary,.btn.danger');if(p)p.focus();
   });
 }
+// Un solo patrón de «cargando» en toda la app (botones, ventanas y pantalla): ver UIRules.busyWhile.
+var busyWhile=UR.busyWhile;
 // Ventana de solo lectura con botones propios (detalle de venta, de turno, de proveedor).
 function infoDialog(title,html,buttons){
   dlg.innerHTML='<form class="dform"><h2>'+title+'</h2>'+html+'<div class="actions">'+(buttons||[]).map(function(b,i){
@@ -356,7 +358,7 @@ function infoDialog(title,html,buttons){
   dlg.querySelector('[data-close]').addEventListener('click',function(){dlg.close();});
   (buttons||[]).forEach(function(b,i){dlg.querySelector('[data-b="'+i+'"]').addEventListener('click',function(ev){
     var bt=ev.currentTarget;if(bt.dataset.busy)return;bt.dataset.busy='1';
-    Promise.resolve().then(b.fn).catch(function(err){if(!err.cancelled)toast(err.message,true);}).then(function(){delete bt.dataset.busy;});
+    busyWhile(bt,Promise.resolve().then(b.fn)).catch(function(err){if(!err.cancelled)toast(err.message,true);}).then(function(){delete bt.dataset.busy;});
   });});
   showDlg();
 }
@@ -476,6 +478,7 @@ async function downloadFile(path,name){
   a.href=URL.createObjectURL(blob);a.download=name;
   document.body.appendChild(a);a.click();
   setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},1500);
+  toast('Descarga iniciada: '+name);
 }
 var rangeHTML=function(idFrom,idTo,from,to){
   return '<span class="rng"><label>Desde <input type="date" id="'+idFrom+'" value="'+esc(from)+'" max="'+todayIso()+'"></label> <label>Hasta <input type="date" id="'+idTo+'" value="'+esc(to)+'"></label></span>';
@@ -500,10 +503,16 @@ async function go(view){
   render();
   var h=main.querySelector('h1');if(h){h.setAttribute('tabindex','-1');}
 }
-async function refreshView(){
+// Vuelve a pedir los datos de la pantalla (filtros, búsquedas). Mientras carga, la pantalla lo muestra;
+// si cambiás el filtro de nuevo antes de que responda, se vuelve a pedir con el último y solo se dibuja ese.
+var refreshing=null,refreshAgain=false;
+function refreshView(){
   render();
-  try{await loadView();}catch(e){toast(e.message,true);}
-  render();
+  if(refreshing){refreshAgain=true;return refreshing;}
+  refreshing=busyWhile(main,(async function(){
+    do{refreshAgain=false;try{await loadView();}catch(e){toast(e.message,true);}}while(refreshAgain);
+  })()).then(function(){refreshing=null;render();});
+  return refreshing;
 }
 
 /* ============================================================
@@ -1534,8 +1543,9 @@ function viewClientes(){
   var c=ui.csel&&ui.cdetail&&ui.cdetail.id===ui.csel?ui.cdetail:null;
   var right=ui.csel?(c?clientDetailHTML(c):'<button class="btn back" data-action="back-client">← Volver a la lista</button><div class="skeleton" aria-busy="true"><i></i><i></i></div>'):'<p class="empty">Elegí un cliente para ver sus mascotas, sus compras y sus turnos.</p>';
   return '<section class="pac '+(ui.csel?'show-detail':'')+'"><div class="pac-list">'+
-    '<div class="head"><h1>Clientes</h1><button class="btn primary" data-action="new-client">Nuevo cliente</button></div>'+
-    '<input id="cliq" type="search" placeholder="Buscar por nombre, teléfono, email o mascota" value="'+esc(ui.cliq)+'" aria-label="Buscar cliente">'+
+    // Título, «Nuevo cliente» y buscador quedan fijos arriba al bajar por la lista: el botón nunca queda tapado.
+    '<div class="pac-top"><div class="head"><h1>Clientes</h1><button class="btn primary" data-action="new-client">Nuevo cliente</button></div>'+
+    '<input id="cliq" type="search" placeholder="Buscar por nombre, teléfono, email o mascota" value="'+esc(ui.cliq)+'" aria-label="Buscar cliente"></div>'+
     '<ul class="plist" id="clist">'+clientListHTML()+'</ul></div><div class="pac-detail">'+right+'</div></section>';
 }
 
@@ -2130,6 +2140,11 @@ function supplierDetail(id){
     labelDialogTables();
   }).catch(function(e){if(dlg.open){dlg.close();toast(e.message,true);}});
 }
+var DEACTIVATE_NOTE='Si lo desactivás, no podrá iniciar sesión, pero sigue apareciendo en el registro de actividad e historial. No se elimina de forma permanente y podés volver a activarlo cuando quieras.';
+function confirmDeactivate(u){
+  return choiceDialog('¿Desactivar a '+esc(u.name)+'?','<p>El usuario se desactiva y no podrá iniciar sesión, pero sigue apareciendo en el registro de actividad e historial. No se elimina de forma permanente.</p>',
+    [{label:'Volver',value:false},{label:'Desactivar',value:true,cls:'danger'}]).then(function(v){return v===true;});
+}
 function userForm(u){
   var isNew=!u;u=u||{role:'staff',active:true};
   openForm({title:isNew?'Nuevo usuario':'Editar usuario',
@@ -2137,11 +2152,13 @@ function userForm(u){
     (isNew?fld('Email (es el usuario para ingresar)','email',{type:'email',req:true,full:true,auto:'off',maxlength:150}):'<p class="full">'+esc(u.email)+'</p>')+
     fld('Rol','role',{opts:[['staff','Empleado'],['admin','Dueño / administrador']],value:u.role})+
     fld(isNew?'Contraseña (mínimo 8 caracteres)':'Nueva contraseña (dejala vacía para no cambiarla)','password',{type:'password',req:isNew,minlength:8,auto:'new-password'})+
-    (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true}))+'</div>',
+    (isNew?'':fld('Usuario activo','active',{type:'checkbox',value:u.active,full:true})+'<p class="full hint">'+DEACTIVATE_NOTE+'</p>')+'</div>',
     submit:isNew?'Crear usuario':'Guardar cambios',
     onSubmit:async function(d){
       if(isNew){await api('/users',{body:{name:d.name,email:d.email,role:d.role,password:d.password}});ui.users=null;await reload();toast('Usuario creado');}
-      else{await api('/users/'+u.id,{method:'PATCH',body:{name:d.name,role:d.role,active:!!d.active,password:d.password}});ui.users=null;await reload();toast('Usuario guardado');}
+      else{
+        if(u.active&&!d.active&&!await confirmDeactivate(u))throw Object.assign(new Error('cancelado'),{cancelled:true});
+        await api('/users/'+u.id,{method:'PATCH',body:{name:d.name,role:d.role,active:!!d.active,password:d.password}});ui.users=null;await reload();toast('Usuario guardado');}
     }});
 }
 function passwordForm(){
@@ -2400,7 +2417,7 @@ document.addEventListener('click',function(e){
   if(!fn)return;
   if(b.dataset.busy)return; // evita el doble clic mientras responde el servidor
   b.dataset.busy='1';
-  Promise.resolve().then(function(){return fn(b.dataset.id,b);}).catch(function(err){if(!err.cancelled)toast(err.message||'Algo salió mal. Reintentá.',true);}).then(function(){delete b.dataset.busy;});
+  busyWhile(b,Promise.resolve().then(function(){return fn(b.dataset.id,b);})).catch(function(err){if(!err.cancelled)toast(err.message||'Algo salió mal. Reintentá.',true);}).then(function(){delete b.dataset.busy;});
 });
 // Menú ⋮ de las filas de Stock: se posiciona con "fixed" (la tabla tiene scroll) y se cierra al hacer clic afuera.
 document.addEventListener('toggle',function(e){
