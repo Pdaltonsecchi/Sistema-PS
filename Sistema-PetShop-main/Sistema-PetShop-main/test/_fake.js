@@ -30,7 +30,15 @@ function handle(sql, params) {
   if (/UPDATE counters SET value = value \+ 1/.test(sql)) {
     if (state.staged == null) state.counter += 1;
     else state.staged += 1;
-    return { rows: [{ value: state.staged == null ? state.counter : state.staged }] };
+    const value = state.staged == null ? state.counter : state.staged;
+    // La venta se inserta en una sola instrucción (WITH n AS (UPDATE counters ...) ...): devuelve la fila de la regla con el número.
+    if (/^\s*WITH/i.test(sql)) {
+      const r = state.rules.find((x) => x.re.test(sql));
+      const rows = r ? (typeof r.rows === 'function' ? r.rows(params, sql) : r.rows) : [{}];
+      if (rows instanceof Error) throw rows;
+      return { rows: rows.map((x) => Object.assign({ number: value, appt: 1 }, x)), rowCount: rows.length };
+    }
+    return { rows: [{ value }] };
   }
   for (const r of state.rules) {
     if (r.re.test(sql)) {

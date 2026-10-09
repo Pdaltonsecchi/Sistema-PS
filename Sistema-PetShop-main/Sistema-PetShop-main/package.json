@@ -9,7 +9,8 @@
     "test": "node test/run.js",
     "demo": "node test/demo.js",
     "iconos": "node scripts/iconos.js",
-    "check": "node --check server/index.js && node --check server/api.js && node --check public/app.js"
+    "check": "node --check server/index.js && node --check server/api.js && node --check public/app.js && node --check public/ui-rules.js",
+    "test:pg": "node test/postgres/run.js"
   },
   "engines": {
     "node": ">=18"

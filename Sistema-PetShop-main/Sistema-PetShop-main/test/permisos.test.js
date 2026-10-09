@@ -84,16 +84,15 @@ test('el empleado no ve resúmenes con ganancia (solo ventas y cantidades)', asy
 });
 
 /* ---------- Ventas contra la API real (base simulada) ---------- */
-function saleRules(stockOk) {
+const QA_PRODUCT = { type: 'product', id: 1, name: 'QA Alimento 15kg', category: 'Alimento balanceado', unit: 'u', price: 10000, cost: 7000, expires: null };
+function saleRules(stockOk, dup) {
   const ok = typeof stockOk === 'function' ? stockOk : () => stockOk;
   return [
-    [/SELECT id, number, total, discount FROM sales WHERE idem_key/, []],
-    [/SELECT name, category, unit, price, cost, expires_on AS expires FROM products/, [{ name: 'QA Alimento 15kg', category: 'Alimento balanceado', unit: 'u', price: 10000, cost: 7000, expires: null }]],
+    // Una sola lectura trae los artículos, el cliente, la mascota y la venta repetida (misma clave), si la hay.
+    [/UNION ALL SELECT 'dup'/, () => [QA_PRODUCT].concat(dup ? [{ type: 'dup', id: 77, name: '5', price: 10000, cost: 0 }] : [])],
     [/INSERT INTO sales/, [{ id: 77 }]],
-    [/UPDATE products SET stock = stock - \$1/, () => (ok() ? [{ name: 'QA Alimento 15kg', stock: 4, unit: 'u' }] : [])],
+    [/UPDATE products p SET stock = p.stock - v.qty/, () => (ok() ? [{ id: 1 }] : [])],
     [/SELECT name, stock, unit FROM products WHERE id/, [{ name: 'QA Alimento 15kg', stock: 0, unit: 'u' }]],
-    [/INSERT INTO stock_movements/, [{ id: 9 }]],
-    [/INSERT INTO cash_movements/, [{ id: 3 }]],
   ];
 }
 const salesInsert = () => state.log.filter((x) => /INSERT INTO sales/.test(x.sql)).pop();
@@ -112,8 +111,8 @@ test('venta: sin precio enviado, el total usa el precio de lista de la base', as
   assert.equal(r.status, 200);
   assert.equal(r.body.total, 20000);
   const ins = salesInsert();
-  assert.equal(ins.params[7], 20000); // total
-  assert.equal(ins.params[8], 14000); // costo de lo vendido
+  assert.equal(ins.params[10], 20000); // total
+  assert.equal(ins.params[11], 14000); // costo de lo vendido
 });
 
 test('venta: el dueño puede cambiar el precio solo con motivo y queda auditado', async () => {
@@ -143,8 +142,7 @@ test('numeración: una venta rechazada por falta de stock no consume el número'
 });
 
 test('idempotencia: la misma clave dos veces devuelve la misma venta', async () => {
-  reset(saleRules(true));
-  state.rules[0].rows = [{ id: 77, number: 5, total: 10000, discount: 0 }];
+  reset(saleRules(true, true));
   const r = await call('staff', 'POST', '/api/sales', { idemKey: 'abc-123', method: 'Efectivo', items: [{ type: 'product', id: 1, qty: 1 }] });
   assert.equal(r.status, 200);
   assert.equal(r.body.repeated, true);

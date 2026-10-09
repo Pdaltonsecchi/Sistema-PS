@@ -5,6 +5,7 @@
    Utilidades
    ============================================================ */
 var $=function(s){return document.querySelector(s);};
+var UR=window.UIRules; // reglas puras compartidas con los tests (public/ui-rules.js)
 var pad=function(n){return String(n).padStart(2,'0');};
 var isoOf=function(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
 var todayIso=function(){return isoOf(new Date());};
@@ -381,17 +382,23 @@ function sumRange(){
   return [t,t];
 }
 var sumQ=function(){var r=sumRange();return 'from='+r[0]+'&to='+r[1];};
+// Solo se muestra la última carga pedida: si cambiás el período mientras otra consulta sigue en curso,
+// la respuesta vieja se descarta (antes podía llegar tarde y dejar la Comparación con el período anterior).
+var sumSeq=UR.latest();
+/* Al cambiar el período, los números del período anterior se borran (se ve "Cargando") en vez de quedar a la vista. */
+function clearSumData(){ui.sum.data=null;ui.sum.hours=null;ui.sum.compare=null;ui.sum.products=null;ui.sum.clients=null;ui.sum.staff=null;}
 async function loadSummary(){
-  var q=sumQ(),tab=ui.sum.tab,admin=isAdmin();
+  var q=sumQ(),tab=ui.sum.tab,admin=isAdmin(),t=sumSeq.next(),r;
   if(tab==='general'){
     var calls=[api('/summary?'+q),api('/summary/hours?'+q)];
     if(admin)calls.push(api('/summary/monthly?months=12'),api('/summary/compare?'+q));
-    var r=await Promise.all(calls);
+    r=await Promise.all(calls);
+    if(!sumSeq.isCurrent(t))return;
     ui.sum.data=r[0];ui.sum.hours=r[1];ui.sum.monthly=admin?r[2].months:null;ui.sum.compare=admin?r[3]:null;
-  }else if(tab==='productos'&&admin){ui.sum.products=await api('/summary/products?'+q+'&group='+ui.sum.pgroup);}
-  else if(tab==='clientes'){ui.sum.clients=await api('/summary/clients?'+q);}
-  else if(tab==='personal'&&admin){ui.sum.staff=await api('/summary/staff?'+q);}
-  else if(tab==='proyeccion'&&admin){ui.sum.proj=await api('/summary/projection');}
+  }else if(tab==='productos'&&admin){r=await api('/summary/products?'+q+'&group='+ui.sum.pgroup);if(sumSeq.isCurrent(t))ui.sum.products=r;}
+  else if(tab==='clientes'){r=await api('/summary/clients?'+q);if(sumSeq.isCurrent(t))ui.sum.clients=r;}
+  else if(tab==='personal'&&admin){r=await api('/summary/staff?'+q);if(sumSeq.isCurrent(t))ui.sum.staff=r;}
+  else if(tab==='proyeccion'&&admin){r=await api('/summary/projection');if(sumSeq.isCurrent(t))ui.sum.proj=r;}
 }
 async function loadView(){
   var v=ui.view;
@@ -538,18 +545,22 @@ function card(label,value,sub,cls){
 var srTable=function(caption,head,rows){return '<table class="sr-only"><caption>'+esc(caption)+'</caption><thead><tr>'+head.map(function(h){return '<th>'+esc(h)+'</th>';}).join('')+'</tr></thead><tbody>'+rows.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+esc(c)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table>';};
 var keyLabel=function(k,gran){if(gran==='month'){var t=parse(k+'-01').toLocaleDateString('es-AR',{month:'short',year:'2-digit'});return t.replace('.','');}return k.slice(8,10)+'/'+k.slice(5,7);};
 // Gráfico de barras accesible (con tabla alternativa para lectores de pantalla y tooltip con valores).
+// Ancho fijo como el de líneas: con muchas columnas, las etiquetas del eje X se espacian (R.labelStep) para no pisarse.
+var LABEL_MIN={month:46,day:40}; // espacio mínimo por etiqueta («sept 26», «08/10»), en unidades del gráfico
 function barChart(points,gran,showProfit){
-  var max=Math.max.apply(null,points.map(function(p){return p.total;}).concat([1]));
-  var W=Math.max(320,points.length*26),H=180,bw=W/points.length,step=Math.ceil(points.length/16);
+  var n=points.length,max=Math.max.apply(null,points.map(function(p){return p.total;}).concat([1]));
+  var W=620,H=200,L=8,Rm=8,T=12,B=26,pw=W-L-Rm,ph=H-T-B,bw=pw/Math.max(1,n),step=UR.labelStep(n,pw,LABEL_MIN[gran]||LABEL_MIN.day);
+  var y=function(v){return T+(1-v/max)*ph;};
+  var grid=[0,.5,1].map(function(g){var yy=y(max*g);return '<line x1="'+L+'" x2="'+(W-Rm)+'" y1="'+yy.toFixed(1)+'" y2="'+yy.toFixed(1)+'" class="grid"></line>'+(g?'<text x="'+L+'" y="'+(yy-3).toFixed(1)+'">'+money(max*g)+'</text>':'');}).join('');
   var bars=points.map(function(p,i){
-    var h=Math.round(p.total/max*(H-34)),hp=showProfit?Math.round(Math.max(0,p.profit)/max*(H-34)):0,w=Math.max(4,Math.min(48,Math.round(bw*0.7))),x=Math.round(i*bw+(bw-w)/2);
+    var w=Math.max(3,Math.min(40,bw*0.62)),x=L+i*bw+(bw-w)/2,h=p.total/max*ph,hp=showProfit?Math.max(0,p.profit)/max*ph:0;
     return '<g><title>'+keyLabel(p.key,gran)+': vendido '+money(p.total)+(showProfit?' · ganancia '+money(p.profit):'')+' · '+plural(p.count,'venta','ventas')+'</title>'+
-      '<rect x="'+x+'" y="'+(H-22-h)+'" width="'+w+'" height="'+Math.max(h,p.total>0?2:0)+'" rx="3" class="b-total"></rect>'+
-      (showProfit?'<rect x="'+x+'" y="'+(H-22-hp)+'" width="'+w+'" height="'+hp+'" rx="3" class="b-profit"></rect>':'')+
-      (i%step===0?'<text x="'+(x+w/2)+'" y="'+(H-6)+'" text-anchor="middle">'+keyLabel(p.key,gran)+'</text>':'')+'</g>';
+      '<rect x="'+x.toFixed(1)+'" y="'+(T+ph-h).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+Math.max(h,p.total>0?2:0).toFixed(1)+'" rx="3" class="b-total"></rect>'+
+      (showProfit?'<rect x="'+x.toFixed(1)+'" y="'+(T+ph-hp).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+hp.toFixed(1)+'" rx="3" class="b-profit"></rect>':'')+
+      (i%step===0?'<text x="'+(x+w/2).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle">'+keyLabel(p.key,gran)+'</text>':'')+'</g>';
   }).join('');
-  return '<div class="chartwrap"><svg class="chart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución de ventas">'+
-    '<line x1="0" x2="'+W+'" y1="'+(H-22)+'" y2="'+(H-22)+'" class="axis"></line>'+bars+'</svg></div>'+
+  return '<div class="chartwrap"><svg class="chart barchart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución de ventas">'+grid+
+    '<line x1="'+L+'" x2="'+(W-Rm)+'" y1="'+(T+ph)+'" y2="'+(T+ph)+'" class="axis"></line>'+bars+'</svg></div>'+
     srTable('Ventas por '+(gran==='month'?'mes':'día'),['Período','Vendido'].concat(showProfit?['Ganancia']:[]).concat(['Ventas']),points.map(function(p){return [keyLabel(p.key,gran),money(p.total)].concat(showProfit?[money(p.profit)]:[]).concat([String(p.count)]);}));
 }
 function lineChart(lines,labels){
@@ -597,7 +608,7 @@ function areaChart(points,gran,showProfit){
   var W=620,H=200,L=8,R=8,T=12,B=26,n=points.length,max=Math.max.apply(null,points.map(function(p){return p.total;}).concat([1]));
   var x=function(i){return n<2?W/2:L+i/(n-1)*(W-L-R);},y=function(v){return T+(1-v/max)*(H-T-B);};
   var line=function(f){return points.map(function(p,i){return x(i).toFixed(1)+','+y(Math.max(0,f(p))).toFixed(1);}).join(' ');};
-  var step=Math.ceil(n/8),grid=[0,.5,1].map(function(g){var yy=y(max*g);return '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy.toFixed(1)+'" y2="'+yy.toFixed(1)+'" class="grid"></line>'+(g?'<text x="'+L+'" y="'+(yy-3).toFixed(1)+'">'+money(max*g)+'</text>':'');}).join('');
+  var step=UR.labelStep(n,W-L-R,LABEL_MIN[gran]||LABEL_MIN.day),grid=[0,.5,1].map(function(g){var yy=y(max*g);return '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy.toFixed(1)+'" y2="'+yy.toFixed(1)+'" class="grid"></line>'+(g?'<text x="'+L+'" y="'+(yy-3).toFixed(1)+'">'+money(max*g)+'</text>':'');}).join('');
   var labels=points.map(function(p,i){return i%step===0?'<text x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="middle">'+keyLabel(p.key,gran)+'</text>':'';}).join('');
   var dots=points.map(function(p,i){return '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(p.total).toFixed(1)+'" r="'+(n>40?1.5:3)+'" class="pt"><title>'+keyLabel(p.key,gran)+': vendido '+money(p.total)+(showProfit?' · ganancia '+money(p.profit):'')+' · '+plural(p.count,'venta','ventas')+'</title></circle>';}).join('');
   return '<div class="chartwrap"><svg class="chart areachart" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Evolución de ventas">'+grid+
@@ -822,10 +833,20 @@ function addToCart(type,id,qty){
   toast('Agregado: '+src.name);
   return true;
 }
+function posMatches(text){
+  var q=norm(text).trim();
+  return {
+    prods:S.products.filter(function(x){return !q||norm(x.name+' '+x.brand+' '+x.category+' '+(x.barcodes||[]).join(' ')).indexOf(q)>=0;}),
+    servs:S.services.filter(function(x){return !q||norm(x.name+' '+x.category).indexOf(q)>=0;}),
+  };
+}
+/** Lo que se puede agregar con esa búsqueda, en el orden de la lista (servicios y luego productos con stock). */
+function searchItems(text){
+  var m=posMatches(text);
+  return m.servs.slice(0,12).map(function(x){return {type:'service',id:x.id};}).concat(m.prods.slice(0,40).filter(function(x){return x.stock>0;}).map(function(x){return {type:'product',id:x.id};}));
+}
 function posResults(){
-  var q=norm(ui.posq).trim();
-  var prods=S.products.filter(function(x){return !q||norm(x.name+' '+x.brand+' '+x.category+' '+(x.barcodes||[]).join(' ')).indexOf(q)>=0;});
-  var servs=S.services.filter(function(x){return !q||norm(x.name+' '+x.category).indexOf(q)>=0;});
+  var m=posMatches(ui.posq),prods=m.prods,servs=m.servs;
   var h=servs.slice(0,12).map(function(s){
     return '<li><button class="pitem" data-action="cart-add" data-type="service" data-id="'+s.id+'"><span class="avatar" aria-hidden="true">'+ini(s.name)+'</span><span class="pi-main"><b>'+esc(s.name)+'</b><small>Servicio · '+esc(s.category)+'</small></span><b>'+money(s.price)+'</b></button></li>';
   }).join('')+prods.slice(0,40).map(function(x){
@@ -902,7 +923,7 @@ function renderCart(){var b=$('#cartbox');if(b)b.innerHTML=cartHTML();saveDraft(
 function focusSearch(){var q=$('#posq');if(q&&!('ontouchstart' in window))q.focus();}
 async function payCart(){
   var c=ui.cart,t=cartTotals(),admin=isAdmin();
-  if(!c.items.length)return;
+  if(!c.items.length||paying)return;
   var noReason=c.items.find(function(it){return Math.abs(it.price-it.listPrice)>0.004&&(it.reason||'').trim().length<3;});
   if(noReason){toast('Escribí el motivo del cambio de precio de «'+noReason.name+'».',true);var el=main.querySelector('.creason');if(el)el.focus();return;}
   var body={idemKey:c.key,items:c.items.map(function(it){var o={type:it.type,id:it.id,qty:it.qty};if(admin&&Math.abs(it.price-it.listPrice)>0.004){o.price=it.price;o.reason=it.reason;}return o;}),
@@ -913,11 +934,36 @@ async function payCart(){
     if(sum!==t.total){toast('Los pagos suman '+money(sum)+' y el total es '+money(t.total)+'. Revisá los montos.',true);return;}
   }else body.method=c.method;
   var r;
+  setPaying(true);
   try{r=await apiConfirm('/sales',{body:body});}
-  catch(e){if(e.cancelled)return;throw e;}
-  resetCart();ui.posq='';
-  await reload();
+  catch(e){setPaying(false);if(e.cancelled)return;throw e;}
+  // Con la respuesta alcanza para actualizar el stock y la caja en pantalla: no se vuelve a pedir todo (/api/bootstrap).
+  applySale(r);
+  resetCart();ui.posq='';paying=false;
+  if(ui.view==='vender')render();
   saleDoneDialog(r.id,r.number,r.total,r.lossLines);
+}
+/* Cobrar: el botón se deshabilita al instante y dice "Procesando…" hasta que responde el servidor.
+   También bloquea F4 mientras tanto (además, el servidor no registra dos veces la misma venta: idemKey). */
+var paying=false;
+function setPaying(on){
+  paying=on;
+  var b=main.querySelector('[data-action="cart-pay"]');if(!b)return;
+  b.disabled=on;b.classList.toggle('busy',on);b.setAttribute('aria-busy',String(on));
+  if(on)b.textContent='Procesando…';else refreshCartTotals();
+}
+function applySale(r){
+  (r.stock||[]).forEach(function(x){var p=prodById(x.id);if(p)p.stock=r3(p.stock-x.qty);});
+  var sm=S.summary;
+  if(sm&&r.payments&&r.date===todayIso()){
+    r.payments.forEach(function(p){
+      sm.month.in=r2(sm.month.in+p.amount);sm.month.byMethod[p.method]=r2((sm.month.byMethod[p.method]||0)+p.amount);
+      if(p.method==='Efectivo'){sm.month.efe=r2(sm.month.efe+p.amount);sm.drawer=r2(sm.drawer+p.amount);if(sm.todayCash)sm.todayCash.in=r2(sm.todayCash.in+p.amount);}
+      else if(p.method==='Transferencia')sm.month.tra=r2(sm.month.tra+p.amount);else sm.month.tar=r2(sm.month.tar+p.amount);
+    });
+  }
+  if(ui.cart.apptId)ui.appts=null; // el turno quedó entregado: la agenda se vuelve a pedir al entrar
+  ui.sales=null;
 }
 function saleDoneDialog(id,number,total,loss){
   infoDialog('Venta N° '+number+' registrada','<p class="big">'+money(total)+'</p><p>Se descontó el stock y se registró el ingreso en la caja.</p>'+(loss&&loss.length?'<p class="warnbox">Ojo: se vendió con pérdida '+esc(loss.join(', '))+'.</p>':''),[
@@ -1210,6 +1256,11 @@ function mountStrip(){
 /** Qué hacer con un código leído para vender. */
 async function handleScanSell(code){
   var x=prodByBarcode(code);
+  if(!x&&ui.view==='vender'){
+    // Lo que llega como ráfaga de teclas puede ser un nombre escrito rápido: si coincide con productos, se agrega el primero.
+    var hit=searchItems(code)[0];
+    if(UR.posEnterAction(code,{results:hit?1:0})==='first'){if(addToCart(hit.type,hit.id))renderCart();return;}
+  }
   if(!x){await unknownCode(code);return;}
   if(ui.view!=='vender'){sellForm(x);return;}
   if(x.unit==='kg'){var q=await askQty(x);if(!q)return;if(addToCart('product',x.id,q))renderCart();return;}
@@ -2050,7 +2101,7 @@ var actions={
   more:function(id,b){ui[b.dataset.v]+=PAGE;render();},
   'menu-toggle':function(){document.body.classList.toggle('navopen');},
   // Resumen
-  'sum-period':function(id,b){ui.sum.period=b.dataset.v;if(b.dataset.v!=='range')store.set('petshop_period',b.dataset.v);if(b.dataset.v==='range'&&!(ui.sum.from&&ui.sum.to)){render();return;}return refreshView();},
+  'sum-period':function(id,b){ui.sum.period=b.dataset.v;if(b.dataset.v!=='range')store.set('petshop_period',b.dataset.v);if(b.dataset.v==='range'&&!(ui.sum.from&&ui.sum.to)){render();return;}clearSumData();return refreshView();},
   'sum-tab':function(id,b){ui.sum.tab=b.dataset.v;return refreshView();},
   'sum-sub':function(id,b){ui.sum.sub=b.dataset.v;render();},
   'sum-topby':function(id,b){ui.sum.topBy=b.dataset.v;render();},
@@ -2267,8 +2318,14 @@ document.addEventListener('keydown',function(e){
     e.preventDefault();
     var x=prodByBarcode(code);
     if(e.target.id==='posq'){
-      if(x){if(addToCart('product',x.id))renderCart();}
-      else{var first=$('#posres [data-action="cart-add"]:not([disabled])');if(first)first.click();else{toast('No encontramos nada con «'+code+'».',true);return;}}
+      // Con resultados en la lista, Enter agrega el primero aunque el texto sea el nombre exacto (no es un código nuevo).
+      ui.posq=e.target.value;$('#posres').innerHTML=posResults();
+      var first=$('#posres [data-action="cart-add"]:not([disabled])');
+      var act=UR.posEnterAction(code,{barcodeMatch:!!x,results:first?1:0});
+      if(act==='barcode'){if(addToCart('product',x.id))renderCart();}
+      else if(act==='first')first.click();
+      else if(act==='unknown'&&isAdmin()){unknownCode(code);return;}
+      else{toast('No encontramos nada con «'+code+'».',true);return;}
       ui.posq='';e.target.value='';$('#posres').innerHTML=posResults();
     }else if(x)handleScanSell(code);
     return;
@@ -2321,7 +2378,7 @@ document.addEventListener('change',function(e){
     var k=ranges[id],obj=id.indexOf('sum')===0?ui.sum:ui,key=id.indexOf('sum')===0?(id==='sumfrom'?'from':'to'):id;
     obj[key]=t.value;
     if(obj[k[0]]&&obj[k[1]]&&obj[k[1]]<obj[k[0]]){toast('«Hasta» no puede ser anterior a «Desde».',true);obj[key]='';t.value='';return;}
-    if(obj[k[0]]&&obj[k[1]]){if(id[0]==='c')ui.cashp='range';refreshView();}
+    if(obj[k[0]]&&obj[k[1]]){if(id[0]==='c')ui.cashp='range';if(obj===ui.sum)clearSumData();refreshView();}
     else if(id[0]==='c'&&ui.cashp==='range'){ui.cashp='month';refreshView();}
     else if(id==='afrom'||id==='ato')refreshView();
     return;

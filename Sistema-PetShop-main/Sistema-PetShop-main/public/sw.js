@@ -1,7 +1,7 @@
 // Service worker de la app instalable. Solo guarda los archivos de la pantalla (para abrir rápido y sin conexión
 // mostrar la última versión). NUNCA guarda respuestas de /api: los datos del negocio siempre vienen del servidor.
-const CACHE = 'petshop-v3';
-const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'petshop-v4';
+const SHELL = ['/', '/index.html', '/ui-rules.js', '/app.js', '/styles.css', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

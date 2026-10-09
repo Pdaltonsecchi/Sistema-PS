@@ -641,7 +641,7 @@ body{overflow-x:clip}
 .sw{display:inline-block;width:.7rem;height:.7rem;border-radius:3px;background:var(--c0)}
 .sw0{background:var(--c0)}.sw1{background:var(--c1)}.sw2{background:var(--c2)}.sw3{background:var(--c3)}.sw4{background:var(--c4)}.sw5{background:var(--c5)}
 .areachart .area{fill:color-mix(in srgb,var(--brand) 14%,transparent)}
-.areachart .grid{stroke:var(--line);stroke-dasharray:3 3}
+.areachart .grid,.barchart .grid{stroke:var(--line);stroke-dasharray:3 3}
 .areachart .pt{fill:var(--panel);stroke:var(--brand);stroke-width:2}
 polyline.l-profit{stroke:var(--c1);stroke-width:2.5}
 .legend i.l-profit{background:var(--c1)}

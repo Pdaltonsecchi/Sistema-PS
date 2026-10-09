@@ -4,25 +4,58 @@
    Ventas y caja
    ============================================================ */
 module.exports = function (H) {
-  const { add, db, U, L, HttpError, audit, isAdmin, fullName, fmtQty, getSettings, mapCash, drawerAt, cashSummary, mustExist, optSupplier, deductStock, revertStockMovements } = H;
-
-  /** Próximo número de comprobante. Se toma dentro de la transacción de la venta: si la venta falla, no se consume. */
-  async function nextSaleNumber(c) {
-    const r = await c.query("UPDATE counters SET value = value + 1 WHERE name = 'sale' RETURNING value");
-    if (r.rows[0]) return r.rows[0].value;
-    const m = await c.query("INSERT INTO counters (name, value) SELECT 'sale', COALESCE(MAX(number), 0) + 1 FROM sales RETURNING value");
-    return m.rows[0].value;
-  }
+  const { add, db, U, L, HttpError, audit, isAdmin, fullName, fmtQty, getSettings, mapCash, drawerAt, cashSummary, optSupplier, revertStockMovements } = H;
 
   /**
    * Registrar una venta. El precio, el descuento, el total y la ganancia se calculan acá con los precios de la
    * base: lo que mande el navegador como precio se ignora, salvo que sea el dueño con un motivo (queda auditado).
    * Descuenta el stock, registra un ingreso en caja por cada forma de pago y, si viene de un turno, lo marca entregado.
+   *
+   * Rendimiento: cada consulta es un viaje de ida y vuelta a la base (lento si la base está en otra región), así que
+   * la venta se arma con pocas consultas fijas, sin importar cuántas líneas tenga: leer los artículos, descontar el
+   * stock de todos juntos y una sola instrucción que numera e inserta venta, líneas, movimientos, caja y pagos.
    */
+  const SALE_INSERT =
+    'WITH n AS (UPDATE counters SET value = value + 1 WHERE name = \'sale\' RETURNING value), ' +
+    "cm AS (INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) " +
+    "SELECT $1, 'in', 'Venta N° ' || n.value || ' – ' || $2, 'Ventas', p.method, p.amount, $3 FROM n, unnest($4::text[], $5::numeric[]) AS p(method, amount) WHERE p.amount > 0 RETURNING id, method), " +
+    's AS (INSERT INTO sales (number, on_date, client_id, pet_id, method, subtotal, discount, total, cost_total, note, created_by, idem_key, cash_id) ' +
+    'SELECT n.value, $1, $6, $7, $8, $9, $10, $11, $12, $13, $3, $14, (SELECT MIN(id) FROM cm) FROM n RETURNING id, number), ' +
+    'it AS (INSERT INTO sale_items (sale_id, kind, product_id, service_id, name, category, unit, qty, unit_price, list_price, price_reason, unit_cost, amount) ' +
+    "SELECT s.id, l.kind, CASE WHEN l.kind = 'product' THEN l.ref END, CASE WHEN l.kind = 'service' THEN l.ref END, l.name, l.category, l.unit, l.qty, l.price, l.list_price, l.reason, l.cost, l.amount " +
+    'FROM s, unnest($15::text[], $16::int[], $17::text[], $18::text[], $19::text[], $20::numeric[], $21::numeric[], $22::numeric[], $23::text[], $24::numeric[], $25::numeric[]) ' +
+    'AS l(kind, ref, name, category, unit, qty, price, list_price, reason, cost, amount) RETURNING id), ' +
+    'mv AS (INSERT INTO stock_movements (product_id, product_name, on_date, qty, reason, created_by, unit_price, sale_id, note) ' +
+    "SELECT m.pid, m.name, $1, -m.qty, 'Venta', $3, m.price, s.id, '' FROM s, unnest($26::int[], $27::text[], $28::numeric[], $29::numeric[]) AS m(pid, name, qty, price) RETURNING id), " +
+    'sp AS (INSERT INTO sale_payments (sale_id, method, amount, cash_id) SELECT s.id, p.method, p.amount, cm.id FROM s CROSS JOIN unnest($4::text[], $5::numeric[]) AS p(method, amount) LEFT JOIN cm ON cm.method = p.method RETURNING id), ' +
+    "ap AS (UPDATE appointments SET sale_id = s.id, status = 'entregado', finished_at = COALESCE(finished_at, now()) FROM s WHERE appointments.id = $30 RETURNING appointments.id) " +
+    'SELECT s.id, s.number, (SELECT COUNT(*) FROM ap) AS appt FROM s';
+  H.SALE_INSERT = SALE_INSERT;
+
+  /** Descuenta el stock de todos los productos de la venta en una consulta. Si a alguno no le alcanza, no descuenta nada. */
+  async function deductSaleStock(c, lines) {
+    const need = new Map();
+    lines.filter((l) => l.type === 'product').forEach((l) => need.set(l.id, U.round3((need.get(l.id) || 0) + l.qty)));
+    if (!need.size) return;
+    const ids = [...need.keys()];
+    const r = await c.query(
+      'UPDATE products p SET stock = p.stock - v.qty FROM unnest($1::int[], $2::numeric[]) AS v(id, qty) WHERE p.id = v.id AND p.stock >= v.qty RETURNING p.id',
+      [ids, ids.map((id) => need.get(id))]
+    );
+    if (r.rows.length === ids.length) return;
+    // A alguno no le alcanza: la transacción se deshace entera y se avisa cuál (el primero en el orden de la venta).
+    const done = new Set(r.rows.map((x) => x.id));
+    const id = ids.find((x) => !done.has(x));
+    const e = (await c.query('SELECT name, stock, unit FROM products WHERE id = $1', [id])).rows[0];
+    if (!e) throw new HttpError(404, 'Uno de los productos ya no existe. Recargá la página.');
+    throw new HttpError(409, 'No hay stock suficiente de ' + e.name + ': quedan ' + fmtQty(Math.max(0, e.stock), e.unit) + '.', { code: 'no_stock' });
+  }
+
+  const repeatedSale = (dup) => ({ ok: true, id: dup.id, number: dup.number, total: Number(dup.total), discount: Number(dup.discount), repeated: true });
+
   add('POST', '/api/sales', async (ctx) => {
     const b = ctx.body;
     const admin = isAdmin(ctx);
-    const settings = await getSettings();
     // El empleado vende con fecha de hoy; el dueño puede cargar una venta de un día anterior.
     const date = admin && b.date ? U.pastDate(b.date, 'Fecha de la venta') : U.todayAR();
     const raw = Array.isArray(b.items) ? b.items : [];
@@ -33,81 +66,79 @@ module.exports = function (H) {
     const petId = b.petId ? U.idParam(b.petId) : null;
     const apptId = b.appointmentId ? U.idParam(b.appointmentId) : null;
     const idem = b.idemKey == null || b.idemKey === '' ? null : U.optStr(String(b.idemKey), 80);
-    if (idem) {
-      // Doble clic o reintento con la misma clave: se devuelve la venta ya registrada, no se crea otra.
-      const dup = (await db.query('SELECT id, number, total, discount FROM sales WHERE idem_key = $1', [idem])).rows[0];
-      if (dup) return { ok: true, id: dup.id, number: dup.number, total: Number(dup.total), discount: Number(dup.discount), repeated: true };
-    }
+    const wanted = raw.map((it) => {
+      if (!it || typeof it !== 'object') throw U.bad('Hay una línea de la venta que no se pudo leer. Recargá la página.');
+      return { type: U.oneOf(it.type, ['product', 'service'], 'Tipo de artículo'), id: U.idParam(it.id), it };
+    });
+    const settings = await getSettings();
     try {
       return await db.tx(async (c) => {
-        if (clientId) await mustExist(c, 'clients', clientId, 'No encontramos ese cliente. Recargá la página.');
+        // Artículos, cliente, mascota y venta repetida (misma clave) en una sola lectura.
+        const pIds = wanted.filter((w) => w.type === 'product').map((w) => w.id);
+        const sIds = wanted.filter((w) => w.type === 'service').map((w) => w.id);
+        const found = await c.query(
+          "SELECT 'product' AS type, id, name, category, unit, price, cost, expires_on AS expires FROM products WHERE id = ANY($1::int[]) " +
+            "UNION ALL SELECT 'service', id, name, category, 'u', price, 0, NULL FROM services WHERE id = ANY($2::int[]) " +
+            "UNION ALL SELECT 'client', id, '', '', '', 0, 0, NULL FROM clients WHERE id = $3 " +
+            "UNION ALL SELECT 'pet', client_id, '', '', '', 0, 0, NULL FROM pets WHERE id = $4 " +
+            "UNION ALL SELECT 'dup', id, number::text, '', '', total, discount, NULL FROM sales WHERE idem_key = $5",
+          [pIds, sIds, clientId, petId, idem]
+        );
+        // Doble clic o reintento con la misma clave: se devuelve la venta ya registrada, no se crea otra.
+        const dup = found.rows.find((x) => x.type === 'dup');
+        if (dup) return repeatedSale({ id: dup.id, number: Number(dup.name), total: dup.price, discount: dup.cost });
+        const byKey = {};
+        found.rows.forEach((x) => (byKey[x.type + ':' + x.id] = x));
+        const pet = found.rows.find((x) => x.type === 'pet');
+        if (clientId && !found.rows.some((x) => x.type === 'client')) throw new HttpError(404, 'No encontramos ese cliente. Recargá la página.');
         if (petId) {
-          const pt = (await c.query('SELECT client_id FROM pets WHERE id = $1', [petId])).rows[0];
-          if (!pt) throw new HttpError(404, 'No encontramos esa mascota. Recargá la página.');
-          if (clientId && pt.client_id !== clientId) throw U.bad('La mascota elegida no es de ese cliente.');
+          if (!pet) throw new HttpError(404, 'No encontramos esa mascota. Recargá la página.');
+          if (clientId && pet.id !== clientId) throw U.bad('La mascota elegida no es de ese cliente.');
         }
-        const items = [];
-        for (const it of raw) {
-          if (!it || typeof it !== 'object') throw U.bad('Hay una línea de la venta que no se pudo leer. Recargá la página.');
-          const type = U.oneOf(it.type, ['product', 'service'], 'Tipo de artículo');
-          const id = U.idParam(it.id);
-          const src =
-            type === 'product'
-              ? (await c.query('SELECT name, category, unit, price, cost, expires_on AS expires FROM products WHERE id = $1', [id])).rows[0]
-              : (await c.query("SELECT name, category, 'u' AS unit, price, 0 AS cost, NULL AS expires FROM services WHERE id = $1", [id])).rows[0];
+        const items = wanted.map((w) => {
+          const src = byKey[w.type + ':' + w.id];
           if (!src) throw new HttpError(404, 'Uno de los artículos ya no existe. Recargá la página.');
-          items.push({ type, id, qty: U.qty(it.qty == null || it.qty === '' ? 1 : it.qty, 'Cantidad de ' + src.name, src.unit), price: it.price, reason: it.reason, src });
-        }
+          return { type: w.type, id: w.id, qty: U.qty(w.it.qty == null || w.it.qty === '' ? 1 : w.it.qty, 'Cantidad de ' + src.name, src.unit), price: w.it.price, reason: w.it.reason, src };
+        });
         const sale = L.priceSale(items, b.discount, { admin, today: U.todayAR(), confirmExpired: b.confirmExpired === true });
         const pays = L.splitPayments(sale.total, b.method, b.payments, settings.methods);
-        const number = await nextSaleNumber(c);
-        const s = await c.query(
-          'INSERT INTO sales (number, on_date, client_id, pet_id, method, subtotal, discount, total, cost_total, note, created_by, idem_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
-          [number, date, clientId, petId, pays.length > 1 ? 'Mixto' : pays[0].method, sale.subtotal, sale.discount, sale.total, sale.costTotal, note, ctx.user.id, idem]
-        );
-        const saleId = s.rows[0].id;
-        for (const ln of sale.lines) {
-          await c.query(
-            'INSERT INTO sale_items (sale_id, kind, product_id, service_id, name, category, unit, qty, unit_price, list_price, price_reason, unit_cost, amount) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
-            [saleId, ln.type, ln.type === 'product' ? ln.id : null, ln.type === 'service' ? ln.id : null, ln.name, ln.category, ln.unit, ln.qty, ln.price, ln.listPrice, ln.reason, ln.cost, ln.amount]
-          );
-          if (ln.type === 'product') await deductStock(c, ln.id, ln.qty, 'Venta', date, ctx.user.id, { saleId, unitPrice: ln.price });
-          if (ln.reason) {
-            await audit(c, ctx, 'Precio manual', 'venta', saleId, { item: ln.name, price: ln.listPrice }, { item: ln.name, price: ln.price, number }, ln.reason);
-          }
-        }
+        await deductSaleStock(c, sale.lines);
         const label = sale.lines.length === 1 ? (sale.lines[0].qty !== 1 ? fmtQty(sale.lines[0].qty, sale.lines[0].unit) + ' × ' : '') + sale.lines[0].name : sale.lines.length + ' artículos';
-        let firstCash = null;
-        for (const p of pays) {
-          let cashId = null;
-          if (p.amount > 0) {
-            const cm = await c.query(
-              'INSERT INTO cash_movements (on_date, kind, concept, category, method, amount, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-              [date, 'in', 'Venta N° ' + number + ' – ' + label + (pays.length > 1 ? ' (pago mixto)' : ''), 'Ventas', p.method, p.amount, ctx.user.id]
-            );
-            cashId = cm.rows[0].id;
-            if (!firstCash) firstCash = cashId;
-          }
-          await c.query('INSERT INTO sale_payments (sale_id, method, amount, cash_id) VALUES ($1, $2, $3, $4)', [saleId, p.method, p.amount, cashId]);
+        const L_ = sale.lines;
+        const prods = L_.filter((l) => l.type === 'product');
+        const params = [
+          date, label + (pays.length > 1 ? ' (pago mixto)' : ''), ctx.user.id, pays.map((p) => p.method), pays.map((p) => p.amount),
+          clientId, petId, pays.length > 1 ? 'Mixto' : pays[0].method, sale.subtotal, sale.discount, sale.total, sale.costTotal, note, idem,
+          L_.map((l) => l.type), L_.map((l) => l.id), L_.map((l) => l.name), L_.map((l) => l.category), L_.map((l) => l.unit), L_.map((l) => l.qty),
+          L_.map((l) => l.price), L_.map((l) => l.listPrice), L_.map((l) => l.reason || ''), L_.map((l) => l.cost), L_.map((l) => l.amount),
+          prods.map((l) => l.id), prods.map((l) => l.name), prods.map((l) => l.qty), prods.map((l) => l.price), apptId,
+        ];
+        let ins = await c.query(SALE_INSERT, params);
+        if (!ins.rows[0]) {
+          // Base sin contador (no debería pasar: lo crea db/schema.sql): se crea y se reintenta.
+          await c.query("INSERT INTO counters (name, value) SELECT 'sale', COALESCE(MAX(number), 0) FROM sales ON CONFLICT (name) DO NOTHING");
+          ins = await c.query(SALE_INSERT, params);
         }
-        await c.query('UPDATE sales SET cash_id = $1 WHERE id = $2', [firstCash, saleId]);
-        if (apptId) {
-          const a = await c.query(
-            "UPDATE appointments SET sale_id = $1, status = 'entregado', finished_at = COALESCE(finished_at, now()) WHERE id = $2 RETURNING id",
-            [saleId, apptId]
-          );
-          if (!a.rows[0]) throw new HttpError(404, 'No encontramos ese turno. Recargá la agenda.');
+        const saleId = ins.rows[0].id;
+        const number = ins.rows[0].number;
+        if (apptId && !Number(ins.rows[0].appt)) throw new HttpError(404, 'No encontramos ese turno. Recargá la agenda.');
+        for (const ln of L_.filter((l) => l.reason)) {
+          await audit(c, ctx, 'Precio manual', 'venta', saleId, { item: ln.name, price: ln.listPrice }, { item: ln.name, price: ln.price, number }, ln.reason);
         }
         return {
           ok: true, id: saleId, number, total: sale.total, discount: sale.discount,
-          lossLines: admin ? sale.lines.filter((l) => l.type === 'product' && l.cost > 0 && l.amount < l.cost * l.qty).map((l) => l.name) : [],
+          // Para que la pantalla actualice el stock y la caja sin volver a pedir todo.
+          stock: prods.map((l) => ({ id: l.id, qty: l.qty })),
+          payments: pays.filter((p) => p.amount > 0).map((p) => ({ method: p.method, amount: p.amount })),
+          date,
+          lossLines: admin ? L_.filter((l) => l.type === 'product' && l.cost > 0 && l.amount < l.cost * l.qty).map((l) => l.name) : [],
         };
       });
     } catch (e) {
       // Dos pedidos simultáneos con la misma clave: el segundo choca con el índice único y devuelve la venta del primero.
       if (idem && e.code === '23505') {
         const dup = (await db.query('SELECT id, number, total, discount FROM sales WHERE idem_key = $1', [idem])).rows[0];
-        if (dup) return { ok: true, id: dup.id, number: dup.number, total: Number(dup.total), discount: Number(dup.discount), repeated: true };
+        if (dup) return repeatedSale(dup);
       }
       throw e;
     }
