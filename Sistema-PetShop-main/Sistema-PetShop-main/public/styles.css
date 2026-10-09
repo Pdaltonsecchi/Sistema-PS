@@ -641,7 +641,7 @@ body{overflow-x:clip}
 .sw{display:inline-block;width:.7rem;height:.7rem;border-radius:3px;background:var(--c0)}
 .sw0{background:var(--c0)}.sw1{background:var(--c1)}.sw2{background:var(--c2)}.sw3{background:var(--c3)}.sw4{background:var(--c4)}.sw5{background:var(--c5)}
 .areachart .area{fill:color-mix(in srgb,var(--brand) 14%,transparent)}
-.areachart .grid{stroke:var(--line);stroke-dasharray:3 3}
+.areachart .grid,.barchart .grid{stroke:var(--line);stroke-dasharray:3 3}
 .areachart .pt{fill:var(--panel);stroke:var(--brand);stroke-width:2}
 polyline.l-profit{stroke:var(--c1);stroke-width:2.5}
 .legend i.l-profit{background:var(--c1)}
@@ -701,3 +701,35 @@ polyline.l-cur{stroke-width:2.5}
 .calscroll::-webkit-scrollbar-thumb{background:#B8C2CF;border-radius:6px}
 @media (max-width:1100px) and (min-width:821px){:root{--side-w:212px}}
 @media (max-width:820px){.cal-week,.cal-month{grid-template-columns:1fr}}
+
+/* ---- Auditoría QA ---- */
+.fields[hidden]{display:none}
+/* Recordatorios sin cliente: mismo color de estado, rayado para distinguirlos de los turnos. */
+.appt.reminder,.cal-chip.reminder{background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.2) 6px 12px)}
+/* Agenda mientras llegan los turnos de otra vista o semana. */
+.calbody.loading{opacity:.55;transition:opacity .15s}
+.cal-more{cursor:pointer;text-decoration:underline}
+.cal-more:hover{color:var(--brand-dark)}
+/* Resumen → Más análisis: segundo nivel, más chico que las pestañas principales. */
+.moretabs{margin:-.2rem 0 .9rem}
+.moretabs .segb{font-size:.82rem;padding:.3rem .7rem}
+.moredetail{margin-top:.6rem}
+.moredetail>summary{cursor:pointer;font-weight:600;color:var(--brand-dark);padding:.3rem 0}
+.lowdata{font-style:italic}
+/* Configuración */
+.cfg .panel{margin-bottom:1rem}
+.checkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:.35rem .9rem;margin-top:.35rem}
+.checkgrid .check,.hrow .check{display:flex;align-items:center;gap:.45rem;font-weight:500}
+.hours{display:grid;gap:.4rem;max-width:520px}
+.hrow{display:grid;grid-template-columns:7rem 5rem 1fr 1fr;gap:.6rem;align-items:center}
+.hrow input[type=time]{min-width:0}
+@media (max-width:600px){.hrow{grid-template-columns:1fr 1fr;}.hrow>span{grid-column:1/-1;font-weight:600}}
+
+/* B7: cabecera de Clientes fija al bajar por la lista */
+.pac-top{position:sticky;top:0;z-index:6;display:flex;flex-direction:column;gap:.85rem;background:var(--panel);margin:-1.25rem -1rem 0;padding:1.25rem 1rem .6rem;border-bottom:1px solid var(--line)}
+/* B3: un solo patrón de «cargando»: si una carga tarda, una barra arriba y la pantalla atenuada; los botones muestran el círculo */
+#main.busy{position:relative}
+#main.busy>*{opacity:.6;transition:opacity .15s}
+#main.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:60;background:linear-gradient(90deg,transparent,var(--brand),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:loadbar 1s linear infinite}
+@keyframes loadbar{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){#main.busy::before{animation-duration:3s}}

@@ -10,12 +10,16 @@ module.exports = function (H) {
 
   add('GET', '/api/backups', { admin: true }, async () => ({ items: await backup.list(), usage: await backup.usage() }));
 
-  add('POST', '/api/backups', { admin: true }, async () => {
+  add('POST', '/api/backups', { admin: true }, async (ctx) => {
     await backup.snapshot('Copia manual', false);
+    await audit(db, ctx, 'Copia manual creada', 'copia', null, null, null);
   });
 
   add('DELETE', '/api/backups/:id', { admin: true }, async (ctx) => {
-    await backup.remove(U.idParam(ctx.params.id));
+    const id = U.idParam(ctx.params.id);
+    const b = (await db.query('SELECT created_at, label FROM backups WHERE id = $1', [id])).rows[0];
+    await backup.remove(id);
+    await audit(db, ctx, 'Copia eliminada', 'copia', id, b ? { label: b.label, createdAt: b.created_at } : null, null);
   });
 
   // Cantidad de registros que hay hoy, para la confirmación reforzada al restaurar.

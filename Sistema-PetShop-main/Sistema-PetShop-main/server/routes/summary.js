@@ -64,7 +64,7 @@ module.exports = function (H) {
         [R.from, R.to]
       ),
       db.query('SELECT p.method, SUM(p.amount) AS total FROM sale_payments p JOIN sales s ON s.id = p.sale_id WHERE s.voided_at IS NULL AND s.on_date BETWEEN $1 AND $2 GROUP BY p.method', [R.from, R.to]),
-      db.query("SELECT COUNT(*) FILTER (WHERE status IN ('reservado', 'confirmado', 'en_curso', 'listo')) AS pending, COUNT(*) FILTER (WHERE status NOT IN ('cancelado', 'no_vino')) AS total FROM appointments WHERE on_date = $1", [today]),
+      db.query("SELECT COUNT(*) FILTER (WHERE status IN ('reservado', 'confirmado', 'en_curso', 'listo')) AS pending, COUNT(*) FILTER (WHERE status NOT IN ('cancelado', 'no_vino')) AS total FROM appointments WHERE on_date = $1 AND pet_id IS NOT NULL", [today]),
       db.query('SELECT 1 FROM cash_closings WHERE on_date = $1', [today]),
       db.query('SELECT COUNT(*) AS n FROM cash_movements WHERE on_date = $1', [today]),
     ]);
@@ -193,12 +193,14 @@ module.exports = function (H) {
         'FROM sales s WHERE s.voided_at IS NULL AND s.on_date BETWEEN $1 AND $2 GROUP BY 1, 2',
       [R.from, R.to]
     );
+    const days = await db.query('SELECT COUNT(DISTINCT on_date) AS n FROM sales WHERE voided_at IS NULL AND on_date BETWEEN $1 AND $2', [R.from, R.to]);
     const cells = r.rows.map((x) => ({ dow: x.dow, hour: x.hour, n: Number(x.n), total: U.round2(Number(x.total)) }));
     const byDay = [0, 1, 2, 3, 4, 5, 6].map((d) => {
       const c = cells.filter((x) => x.dow === d);
       return { dow: d, n: c.reduce((s, x) => s + x.n, 0), total: U.round2(c.reduce((s, x) => s + x.total, 0)) };
     });
-    return { from: R.from, to: R.to, cells, byDay, phrase: L.peakPhrase(cells) };
+    const data = { sales: cells.reduce((s, x) => s + x.n, 0), days: Number(days.rows[0].n) };
+    return { from: R.from, to: R.to, cells, byDay, reliable: L.peakReliable(data.sales, data.days), sales: data.sales, days: data.days, phrase: L.peakPhrase(cells, data) };
   });
 
   /* ---------- Clientes frecuentes, perdidos, nuevos y recurrentes ---------- */
@@ -292,7 +294,7 @@ module.exports = function (H) {
         "MODE() WITHIN GROUP (ORDER BY sv.name) FILTER (WHERE sv.name IS NOT NULL) AS top_service " +
         'FROM appointments a LEFT JOIN services sv ON sv.id = a.service_id ' +
         "LEFT JOIN (SELECT i.sale_id, SUM(i.amount) AS rev FROM sale_items i JOIN sales s ON s.id = i.sale_id WHERE i.kind = 'service' AND s.voided_at IS NULL GROUP BY i.sale_id) sr ON sr.sale_id = a.sale_id " +
-        'WHERE a.on_date BETWEEN $1 AND $2 GROUP BY 1 ORDER BY done DESC',
+        'WHERE a.on_date BETWEEN $1 AND $2 AND a.pet_id IS NOT NULL GROUP BY 1 ORDER BY done DESC',
       [R.from, R.to]
     );
     const pctOf = (a, b) => (Number(b) ? Math.round((Number(a) / Number(b)) * 1000) / 10 : null);
@@ -335,7 +337,9 @@ module.exports = function (H) {
     const allSales = Number(cur.rows[0].total) + Number(prev.rows[0].total);
     const allCost = Number(cur.rows[0].cost) + Number(prev.rows[0].cost);
     const margin = L.marginPct(allSales, allSales - allCost);
-    const fixedCosts = Math.max(U.round2(Number(curFixed.rows[0].total)), avg(prevFixed.rows[0].total));
+    // Si el dueño cargó el monto de gastos fijos en Configuración, se usa ese; si no, se estiman con los egresos de las categorías marcadas.
+    const fixedSource = s.fixedMonthly > 0 ? 'manual' : 'categories';
+    const fixedCosts = s.fixedMonthly > 0 ? U.round2(s.fixedMonthly) : Math.max(U.round2(Number(curFixed.rows[0].total)), avg(prevFixed.rows[0].total));
     const need = L.breakEven(fixedCosts, margin);
     const reach = L.reachDay(sales, need, day, daysInMonth);
     return {
@@ -346,7 +350,7 @@ module.exports = function (H) {
         optimistic: U.round2(p.sales.optimistic - p.expenses.optimistic),
         prudent: U.round2(p.sales.prudent - p.expenses.prudent),
       },
-      breakEven: { fixedCosts, fixedCategories: s.fixedCategories, margin, need, progress: need ? Math.min(100, Math.round((sales / need) * 1000) / 10) : null, reachDate: reach ? today.slice(0, 8) + String(reach).padStart(2, '0') : null },
+      breakEven: { fixedCosts, fixedSource, fixedCategories: s.fixedCategories, margin, need, progress: need ? Math.min(100, Math.round((sales / need) * 1000) / 10) : null, reachDate: reach ? today.slice(0, 8) + String(reach).padStart(2, '0') : null },
     };
   }
   add('GET', '/api/summary/projection', { admin: true }, async () => projection());
@@ -395,7 +399,7 @@ module.exports = function (H) {
         [W.from, W.to]
       ),
       db.query('SELECT name, stock, min_stock, unit FROM products WHERE stock <= min_stock ORDER BY stock LIMIT 15'),
-      db.query("SELECT name, expires_on FROM products WHERE expires_on IS NOT NULL AND expires_on <= $1 AND stock > 0 ORDER BY expires_on LIMIT 15", [U.addDays(U.todayAR(), 30)]),
+      db.query("SELECT name, expires_on FROM products WHERE expires_on IS NOT NULL AND expires_on <= $1 AND stock > 0 ORDER BY expires_on LIMIT 15", [U.addDays(U.todayAR(), s.expiryDays)]),
       db.query("SELECT COUNT(*) AS n FROM appointments WHERE status = 'no_vino' AND on_date BETWEEN $1 AND $2", [W.from, W.to]),
     ]);
     const lost = (await clientsReport(new URLSearchParams({ from: W.from, to: W.to }))).lost.slice(0, 10);

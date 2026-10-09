@@ -105,17 +105,27 @@ test('números: variación, margen y punto de equilibrio sin dividir por cero', 
   assert.equal(L.breakEven(300000, null), null);
 });
 
-test('proyección: nunca menor a lo ya vendido; sin historial usa el ritmo del mes', () => {
+test('proyección: lo vendido es real y solo se proyectan los días que faltan', () => {
   const p = L.projectMonth({ sales: 100000, expenses: 40000, day: 10, daysInMonth: 30, avgSales: 0, avgExpenses: 0 });
-  assert.equal(p.sales.expected, 300000);
+  assert.equal(p.sales.expected, 300000); // 10.000 por día × 30
   assert.equal(p.expenses.expected, 120000);
-  const q = L.projectMonth({ sales: 100000, expenses: 40000, day: 10, daysInMonth: 30, avgSales: 200000, avgExpenses: 150000 });
-  assert.equal(q.sales.expected, 250000);
-  assert.equal(q.sales.prudent, 200000);
-  assert.equal(q.sales.optimistic, 300000);
+  const q = L.projectMonth({ sales: 100000, expenses: 40000, day: 10, daysInMonth: 30, avgSales: 240000, avgExpenses: 150000 });
+  // Ritmo de este mes 10.000/día, historia 8.000/día → esperado 9.000/día para los 20 días que faltan.
+  assert.equal(q.sales.expected, 280000);
+  assert.equal(q.sales.prudent, 100000 + 7650 * 20); // el menor: 9.000 × 0,85
+  assert.equal(q.sales.optimistic, 100000 + 10350 * 20); // el mayor: 9.000 × 1,15
+  assert.equal(L.projectMonth({ sales: 50, expenses: 0, day: 30, daysInMonth: 30, avgSales: 0, avgExpenses: 0 }).sales.optimistic, 50);
   assert.equal(L.reachDay(100000, 200000, 10, 30), 20);
   assert.equal(L.reachDay(100000, 500000, 10, 30), null);
   assert.equal(L.reachDay(0, 1000, 5, 30), null);
+});
+
+test('proyección: los tres escenarios no dan lo mismo (antes, sin meses anteriores, eran iguales)', () => {
+  const p = L.projectMonth({ sales: 120000, expenses: 30000, day: 8, daysInMonth: 31, avgSales: 0, avgExpenses: 0 });
+  assert.ok(p.sales.prudent < p.sales.expected && p.sales.expected < p.sales.optimistic);
+  // En gastos, el escenario prudente es el que gasta más.
+  assert.ok(p.expenses.prudent > p.expenses.expected && p.expenses.expected > p.expenses.optimistic);
+  assert.ok(p.sales.prudent >= 120000, 'nunca menos de lo ya vendido');
 });
 
 test('clientes perdidos: compraban seguido y hace mucho que no vuelven', () => {
@@ -133,6 +143,23 @@ test('franja pico: frase con la mejor franja de 2 horas', () => {
   const f = L.peakPhrase([{ dow: 6, hour: 11, n: 5, total: 600 }, { dow: 6, hour: 12, n: 3, total: 400 }, { dow: 2, hour: 9, n: 1, total: 300 }]);
   assert.match(f, /sábados de 11 a 13 hs concentran el 77 %/);
   assert.equal(L.peakPhrase([]), '');
+});
+
+test('agenda: dos recordatorios sin mascota a la misma hora no chocan entre sí', () => {
+  const rem = { id: 0, petId: null, date: '2099-06-01', time: '15:00', duration: 15, status: 'reservado', staff: '' };
+  const others = [{ id: 1, petId: null, date: '2099-06-01', time: '15:00', duration: 15, status: 'reservado', staff: '' }];
+  assert.deepEqual(L.findConflicts(rem, others), []);
+  assert.deepEqual(L.findOverlaps(rem, others), []);
+  // Un turno de mascota no avisa por un recordatorio a la misma hora.
+  assert.deepEqual(L.findOverlaps({ id: 0, petId: 3, date: '2099-06-01', time: '15:00', duration: 60, status: 'reservado' }, others), []);
+});
+
+test('franja pico: con pocas ventas no afirma un patrón', () => {
+  const cells = [{ dow: 3, hour: 20, n: 4, total: 8100 }, { dow: 1, hour: 11, n: 1, total: 1900 }];
+  const f = L.peakPhrase(cells, { sales: 5, days: 2 });
+  assert.doesNotMatch(f, /concentran/);
+  assert.match(f, /no hay suficientes datos.*al menos 20 ventas en 7 días distintos.*5 ventas en 2 días/);
+  assert.match(L.peakPhrase(cells, { sales: 25, days: 9 }), /miércoles de 19 a 21 hs concentran el 81 %/);
 });
 
 test('CSV: evita fórmulas de Excel y escapa comillas, ; y saltos de línea', () => {

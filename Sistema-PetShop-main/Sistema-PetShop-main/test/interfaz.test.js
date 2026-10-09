@@ -70,3 +70,27 @@ test('el service worker nunca guarda respuestas de /api', () => {
   assert.match(sw, /\/api\//);
   assert.match(sw, /startsWith\('\/api\/'\)\)\s*return/);
 });
+
+test('Copias de seguridad: la pantalla no menciona el plan gratuito', () => {
+  assert.doesNotMatch(app, /plan gratuito|base de datos gratuita/i);
+  assert.match(app, /El sistema no guarda copias fuera de esta base de datos\. Por eso guarda una copia por día dentro de la misma base/);
+});
+
+test('cargando: botones, ventanas, filtros y búsquedas usan el mismo patrón; las descargas avisan', () => {
+  assert.match(app, /busyWhile\(b,Promise\.resolve\(\)\.then\(function\(\)\{return fn\(b\.dataset\.id,b\);\}\)\)/, 'botones de la pantalla');
+  assert.match(app, /busyWhile\(bt,Promise\.resolve\(\)\.then\(b\.fn\)\)/, 'botones de las ventanas (por ejemplo «Ver» de una venta)');
+  assert.match(app, /refreshing=busyWhile\(main,/, 'filtros y búsquedas de Ventas y Caja');
+  const dl = app.slice(app.indexOf('async function downloadFile'), app.indexOf('\n}', app.indexOf('async function downloadFile')));
+  assert.match(dl, /toast\('Descarga iniciada: '\+name\)/, 'Exportar CSV y las copias avisan que la descarga empezó');
+});
+
+test('Clientes: «Nuevo cliente» queda fijo arriba junto al buscador', () => {
+  assert.match(app, /<div class="pac-top"><div class="head"><h1>Clientes<\/h1><button class="btn primary" data-action="new-client">/);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.pac-top\{position:sticky;top:0;z-index:6;[^}]*background:var\(--panel\)/);
+});
+
+test('desactivar un usuario explica que no se borra', () => {
+  assert.match(app, /no podrá iniciar sesión, pero sigue apareciendo en el registro de actividad e historial\. No se elimina de forma permanente/);
+  assert.match(app, /if\(u\.active&&!d\.active&&!await confirmDeactivate\(u\)\)/);
+});

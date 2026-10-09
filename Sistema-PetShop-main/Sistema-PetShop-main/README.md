@@ -37,7 +37,7 @@ Tiempo estimado: 30 a 45 minutos.
 ## Paso 1 · Crear la base de datos (Neon)
 
 1. Entrá a **neon.tech** y creá una cuenta (podés usar Google o GitHub).
-2. Tocá **Create project**. Nombre: `petshop`. En **Postgres version** dejá la que viene (16 o más) y en **Region** elegí la más cercana (por ejemplo *AWS South America (São Paulo)*).
+2. Tocá **Create project**. Nombre: `petshop`. En **Postgres version** dejá la que viene (16 o más) y en **Region** elegí **AWS US East 2 (Ohio)**. Importante: la base tiene que estar en la misma región que el servidor de Render (Paso 3, *Ohio*). Cada cobro hace varias consultas a la base, y si están en continentes distintos cada una tarda; con los dos en la misma región «Cobrar» pasa de varios segundos a menos de uno. (Si preferís Oregon en Render, elegí *AWS US West 2 (Oregon)* en Neon.)
 3. Al terminar, Neon muestra la ventana **Connect to your database** (si no, tocá **Connect** arriba a la derecha del panel del proyecto).
 4. Elegí la **Branch** `main`, la **Database** `neondb` y el **Role** que viene por defecto.
 5. Dejá activado **Connection pooling** (la dirección tiene `-pooler` en el nombre del servidor) y copiá el **Connection string**. Se ve así:
@@ -64,6 +64,7 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
    - **Root Directory:** `Sistema-PetShop-main/Sistema-PetShop-main` (la app está en esa subcarpeta del repositorio; si lo dejás vacío, Render no encuentra `package.json` y falla el build)
    - **Build Command:** `npm install --omit=dev`
    - **Start Command:** `npm start`
+   - **Region:** Ohio (la misma región que elegiste en Neon)
    - **Instance Type:** Free
 4. En **Environment Variables** agregá:
 
@@ -100,14 +101,17 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 - **Vender:** pantalla *Vender* (o botón *Vender* en cada producto del Stock). Con un **lector de código de barras USB** solo pasás el producto: se suma solo a la venta. Con el celular usá **Escanear con la cámara** (hace falta abrir el sistema con https, como en Render). Detalle y prueba paso a paso: [`docs/escaner.md`](docs/escaner.md).
 - **Llegó mercadería:** en *Stock*, botón **+** del producto o **Ingresar con escáner** (modo continuo). Suma el stock, actualiza el costo y, si querés, registra el gasto en caja.
 - **Qué pedir:** *Stock → Para pedir* te arma el pedido por proveedor; **Copiar pedido** o **Enviar por WhatsApp**.
-- **Peluquería:** agendá el turno en *Agenda* (con quién lo atiende); cuando está listo, tocá el turno → **Listo para retirar** → **Cobrar**.
+- **Peluquería:** agendá el turno en *Agenda* (con quién lo atiende); cuando está listo, tocá el turno → **Listo para retirar** → **Cobrar**. Dos turnos que se superponen se avisan pero se pueden agendar igual.
+- **Recordatorios:** *Agenda → Nuevo recordatorio* sirve para anotar algo sin cliente ni mascota (por ejemplo «Llamar al distribuidor»). Un turno con un servicio del catálogo sigue pidiendo la mascota.
 - **Fin del día:** *Caja → Cierre de caja*: contás la plata, la escribís y el sistema te dice si hay diferencia.
 - **Inflación:** *Stock → % Actualizar precios* sube los precios de una categoría, marca o proveedor de una vez, con redondeo.
 - **Cambiar un precio en una venta:** solo el dueño, escribiendo el motivo. Queda en *Usuarios y actividad → Actividad*.
+- **Eliminar un movimiento de caja:** solo el dueño, escribiendo el motivo. Queda en *Actividad* quién lo eliminó y por qué.
+- **Configuración** (solo el dueño): datos del negocio, stock mínimo por defecto y días de aviso de vencimiento, gastos fijos del mes (los usa el punto de equilibrio del *Resumen*), formas de pago, horario de atención e informe semanal.
 
 ## Informe semanal por email
 
-La pantalla *Configuración* se quitó, así que el informe semanal por email ya no se activa desde el sistema. Las variables `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM` y `CRON_SECRET` quedan sin efecto salvo que se vuelva a agregar esa pantalla.
+Se activa en *Configuración → Informe semanal* y necesita las variables `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM` y `CRON_SECRET` en Render.
 
 ## Copias de seguridad (leer con atención)
 
@@ -164,7 +168,9 @@ Una copia que nunca se probó no es una copia. Para comprobar que las tuyas sirv
 
 - Node 18 o superior. Única dependencia: `pg`. Sin frameworks: servidor HTTP propio en `server/` (rutas en `server/routes/`, reglas de negocio puras en `server/logic.js`), página estática en `public/`. Ver `CONTEXTO-IA.md`.
 - Las tablas están en `db/schema.sql` y se crean y actualizan solas al iniciar (migraciones idempotentes, sin borrar datos).
-- **Tests:** `npm test` (usa `node:test`, incluido en Node; no instala nada). Prueban las reglas de negocio, la tabla de permisos por ruta, ventas y agenda contra la API real con una base simulada en memoria, y la coherencia entre la pantalla y el servidor.
+- **Tests:** `npm test` (usa `node:test`, incluido en Node; no instala nada). Prueban las reglas de negocio, la tabla de permisos por ruta, ventas y agenda contra la API real con una base simulada en memoria, las reglas puras de la pantalla (`public/ui-rules.js`) y la coherencia entre la pantalla y el servidor.
+- **Tests contra PostgreSQL real:** `TEST_DATABASE_URL=postgres://usuario@localhost:5432/base_de_prueba npm run test:pg`. Ejecutan el SQL de verdad (ventas, doble «Cobrar» simultáneo, permisos del empleado, recordatorios, configuración). **Borran todos los datos de esa base**: usá una base vacía, nunca la del negocio.
+- **Cámara del celular:** no se puede probar automáticamente; antes de publicar un cambio en el escáner, seguí la prueba manual de [`docs/escaner.md`](docs/escaner.md) con un celular real.
 - **Demo sin base de datos:** `npm run demo` levanta el sistema en `http://localhost:3999` con datos de prueba "QA" (`?rol=empleado` para ver la vista del empleado, `?rol=dueno` para volver). No guarda nada.
 - Probarlo con una base real: copiar `.env.example` como `.env`, cargar las variables (con `DATABASE_SSL=false` si la base es local) y ejecutar `node --env-file=.env server/index.js` (Node 20.6 o superior).
 - Íconos de la app: `npm run iconos` los regenera en `public/icons/`. El lector de códigos usa ZXing (licencia MIT), en `public/vendor/`.

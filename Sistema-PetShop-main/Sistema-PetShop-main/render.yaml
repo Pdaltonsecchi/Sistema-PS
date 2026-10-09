@@ -5,6 +5,7 @@ services:
     name: petshop
     runtime: node
     plan: free
+    region: ohio # misma región que la base en Neon (AWS US East 2): cada cobro hace varias consultas a la base
     buildCommand: npm install --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
