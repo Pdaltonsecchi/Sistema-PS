@@ -113,3 +113,9 @@ test('Llegó mercadería: el empleado puede anotar cuánto pagó (formulario y e
   assert.match(app, /if\(!admin&&d\.paid!==''\)\{body\.paid=d\.paid;body\.method=d\.method;\}/);
   assert.match(app, /var pd=card_\.querySelector\('\[name="ipaid"\]'\)\.value;if\(pd!==''\)\{body\.paid=pd;/);
 });
+
+test('Configuración: las casillas no se estiran a todo el ancho y la opción marcada se resalta', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.checkgrid \.check input,\.hrow \.check input\{width:1\.1rem;height:1\.1rem;flex:none;/);
+  assert.match(css, /\.checkgrid \.check:has\(input:checked\)\{background:var\(--brand-soft\)/);
+});
