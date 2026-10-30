@@ -114,7 +114,20 @@ test('Llegó mercadería: el empleado puede anotar cuánto pagó (formulario y e
   assert.match(app, /var pd=card_\.querySelector\('\[name="ipaid"\]'\)\.value;if\(pd!==''\)\{body\.paid=pd;/);
 });
 
-test('Configuración ya no existe: ni en el menú ni como pantalla, y nada lleva hacia ella', () => {
-  assert.doesNotMatch(app, /'configuracion'/);
-  assert.doesNotMatch(app, /function viewConfig|function saveConfig|data-action="config-save"|data-action="goto-fixed"/);
+test('Configuración: solo nombre del negocio, horario (varios por día) y formas de pago; nada del informe por email', () => {
+  assert.match(app, /\['configuracion','Configuración','Administración'\]/);
+  const v = app.slice(app.indexOf('function viewConfig(){'), app.indexOf('async function saveConfig('));
+  assert.match(v, /name="open_'\+d/);
+  assert.match(v, /data-action="cfg-add-range"/);
+  assert.match(v, /name="methods"/);
+  assert.doesNotMatch(v, /repEnabled|repTo|ticketText|fixedMonthly|expiryDays|Informe semanal/);
+  assert.match(app.slice(app.indexOf('async function saveConfig('), app.indexOf('function viewUsers(){')), /body:\{shopName:[^}]*hours:hours,methods:methods\}/);
+});
+
+test('formularios: el error va dentro de la barra de botones (visible en el celular) y dice que lo cargado sigue', () => {
+  assert.match(app, /'<div class="actions"><p class="err" role="alert"><\/p><button type="button" class="btn ghost" data-close>/);
+  assert.match(app, /Lo que cargaste sigue acá: tocá «'\+action\+'» de nuevo/);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.actions \.err\{[^}]*order:-1/);
+  assert.doesNotMatch(css, /\.actions:has\(\.btn:nth-child\(5\)\)/, 'el párrafo de error no debe contar como botón');
 });

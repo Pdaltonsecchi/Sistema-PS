@@ -179,6 +179,7 @@ async function getSettings(q) {
   }
   const value = Object.assign({}, DEFAULT_SETTINGS, saved, { report: Object.assign({}, DEFAULT_SETTINGS.report, saved.report || {}) });
   if (!value.shopName) value.shopName = process.env.SHOP_NAME || 'Mi Pet Shop';
+  value.hours = L.normHours(value.hours);
   settingsCache = { at: Date.now(), value };
   return value;
 }
@@ -492,7 +493,9 @@ add('GET', '/api/settings', async (ctx) => publicSettings(await getSettings(), i
 add('PUT', '/api/settings', { admin: true }, async (ctx) => {
   const b = ctx.body;
   const cur = await getSettings();
-  const rep = b.report && typeof b.report === 'object' ? b.report : {};
+  // Lo que no viene en el pedido conserva su valor: la pantalla de Configuración solo edita nombre, horario y formas de pago.
+  const keep = (k) => (b[k] === undefined ? cur[k] : b[k]);
+  const rep = b.report && typeof b.report === 'object' ? b.report : cur.report || {};
   const methods = Array.isArray(b.methods) ? b.methods.filter((m) => U.METHODS.includes(m)) : cur.methods;
   if (!methods.length) throw U.bad('Dejá habilitada al menos una forma de pago.');
   const fixed = Array.isArray(b.fixedCategories) ? b.fixedCategories.filter((c) => U.CASH_OUT_CATS.includes(c)) : cur.fixedCategories;
@@ -501,11 +504,11 @@ add('PUT', '/api/settings', { admin: true }, async (ctx) => {
     .filter(Boolean);
   recipients.forEach((r) => U.checkEmail(r));
   const next = {
-    shopName: U.reqStr(b.shopName, 'Nombre del negocio', 100),
-    address: U.optStr(b.address, 200, 'Dirección'),
-    phone: U.optPhone(b.phone).phone,
-    ticketText: U.optStr(b.ticketText, 200, 'Texto del ticket'),
-    ticketWidth: U.oneOf(Number(b.ticketWidth || 80), [58, 80], 'Ancho del ticket'),
+    shopName: U.reqStr(keep('shopName'), 'Nombre del negocio', 100),
+    address: U.optStr(keep('address'), 200, 'Dirección'),
+    phone: U.optPhone(keep('phone')).phone,
+    ticketText: U.optStr(keep('ticketText'), 200, 'Texto del ticket'),
+    ticketWidth: U.oneOf(Number(keep('ticketWidth') || 80), [58, 80], 'Ancho del ticket'),
     hours: L.checkHours(b.hours || cur.hours),
     methods: U.METHODS.filter((m) => methods.includes(m)),
     fixedCategories: fixed,

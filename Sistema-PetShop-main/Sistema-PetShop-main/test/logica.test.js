@@ -91,6 +91,18 @@ test('agenda: horario comercial (lunes a sábado de 9 a 19, domingo cerrado)', (
   assert.equal(L.withinHours(L.DEFAULT_HOURS, '2026-10-05', '18:30', 60), false); // termina 19:30
   assert.equal(L.withinHours(L.DEFAULT_HOURS, '2026-10-04', '10:00', 30), false); // domingo
   assert.throws(() => L.checkHours({ 1: ['19:00', '09:00'] }), /cierre/);
+  // Horario cortado: de 9 a 13 y de 16 a 19
+  const cut = { 1: [['09:00', '13:00'], ['16:00', '19:00']] };
+  assert.equal(L.withinHours(cut, '2026-10-05', '10:00', 60), true);
+  assert.equal(L.withinHours(cut, '2026-10-05', '12:30', 60), false); // termina 13:30, en el corte
+  assert.equal(L.withinHours(cut, '2026-10-05', '14:00', 30), false); // en el corte
+  assert.equal(L.withinHours(cut, '2026-10-05', '16:00', 180), true);
+  assert.equal(L.withinHours({ 1: ['09:00', '19:00'] }, '2026-10-05', '14:00', 30), true); // formato viejo
+  assert.deepEqual(L.checkHours({ 1: [['16:00', '19:00'], ['09:00', '13:00']] })[1], [['09:00', '13:00'], ['16:00', '19:00']]);
+  assert.deepEqual(L.checkHours({ 2: ['09:00', '18:00'] })[2], [['09:00', '18:00']]);
+  assert.throws(() => L.checkHours({ 1: [['09:00', '13:00'], ['12:00', '19:00']] }), /no se pueden pisar/);
+  assert.throws(() => L.checkHours({ 1: [['08:00', '09:00'], ['10:00', '11:00'], ['12:00', '13:00'], ['14:00', '15:00'], ['16:00', '17:00']] }), /como máximo 4/);
+  assert.equal(L.hoursText(cut[1]), '09:00 a 13:00 y 16:00 a 19:00');
 });
 
 test('números: variación, margen y punto de equilibrio sin dividir por cero', () => {

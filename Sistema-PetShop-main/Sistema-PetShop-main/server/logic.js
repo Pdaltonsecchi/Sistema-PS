@@ -126,30 +126,66 @@ function findOverlaps(a, others) {
   return others.filter((o) => o.id !== a.id && o.petId != null && o.date === a.date && !INACTIVE.includes(o.status) && overlaps(a.time, a.duration, o.time, o.duration));
 }
 
-// Horario comercial por día de la semana (0 = domingo). null = cerrado.
-const DEFAULT_HOURS = { 0: null, 1: ['09:00', '19:00'], 2: ['09:00', '19:00'], 3: ['09:00', '19:00'], 4: ['09:00', '19:00'], 5: ['09:00', '19:00'], 6: ['09:00', '19:00'] };
+// Horario comercial por día de la semana (0 = domingo): null = cerrado, o una lista de tramos [apertura, cierre]
+// (por ejemplo de 9 a 13 y de 16 a 19). El formato viejo de un solo tramo ['09:00', '19:00'] se sigue aceptando.
+const DEFAULT_HOURS = { 0: null, 1: [['09:00', '19:00']], 2: [['09:00', '19:00']], 3: [['09:00', '19:00']], 4: [['09:00', '19:00']], 5: [['09:00', '19:00']], 6: [['09:00', '19:00']] };
+const MAX_RANGES = 4;
 const weekday = (iso) => new Date(iso + 'T12:00:00Z').getUTCDay();
-/** ¿El turno entra completo dentro del horario de ese día? */
+const isRange = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string';
+/** Pasa un día guardado (formato viejo o nuevo) a la lista de tramos, sin validar. */
+function dayRanges(v) {
+  if (!v) return null;
+  if (isRange(v)) return [[v[0], v[1]]];
+  const list = Array.isArray(v) ? v.filter(isRange).map((r) => [r[0], r[1]]) : [];
+  return list.length ? list : null;
+}
+/** Horario guardado → { 0..6: null | [[apertura, cierre], ...] }, tolerante con datos viejos. */
+function normHours(h) {
+  const src = h || DEFAULT_HOURS;
+  const out = {};
+  for (let d = 0; d < 7; d++) out[d] = dayRanges(src[d]);
+  return out;
+}
+/** ¿El turno entra completo dentro de alguno de los tramos de ese día? */
 function withinHours(hours, date, time, duration) {
-  const h = (hours || DEFAULT_HOURS)[weekday(date)];
-  if (!h) return false;
+  const ranges = normHours(hours)[weekday(date)];
+  if (!ranges) return false;
   const s = toMin(time);
-  return s >= toMin(h[0]) && s + Number(duration) <= toMin(h[1]);
+  const e = s + Number(duration);
+  return ranges.some((r) => s >= toMin(r[0]) && e <= toMin(r[1]));
+}
+/** «09:00 a 13:00 y 16:00 a 19:00» */
+function hoursText(ranges) {
+  if (!ranges || !ranges.length) return 'cerrado';
+  const parts = ranges.map((r) => r[0] + ' a ' + r[1]);
+  return parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' y ' + parts[parts.length - 1];
 }
 /** Valida y normaliza el horario comercial que se guarda en la configuración. */
 function checkHours(h) {
   const out = {};
   for (let d = 0; d < 7; d++) {
     const v = h && h[d];
-    if (!v) {
+    if (!v || (Array.isArray(v) && !v.length)) {
       out[d] = null;
       continue;
     }
-    if (!Array.isArray(v) || v.length !== 2) throw U.bad('El horario comercial no es válido.');
-    const a = U.reqTime(v[0], 'Apertura').slice(0, 5);
-    const b = U.reqTime(v[1], 'Cierre').slice(0, 5);
-    if (toMin(b) <= toMin(a)) throw U.bad('En el horario comercial, el cierre tiene que ser después de la apertura.');
-    out[d] = [a, b];
+    const raw = isRange(v) ? [v] : v;
+    if (!Array.isArray(raw) || !raw.every(isRange)) throw U.bad('El horario comercial no es válido.');
+    if (raw.length > MAX_RANGES) throw U.bad('Cada día puede tener como máximo ' + MAX_RANGES + ' horarios.');
+    const ranges = raw
+      .map((r) => {
+        const a = U.reqTime(r[0], 'Apertura').slice(0, 5);
+        const b = U.reqTime(r[1], 'Cierre').slice(0, 5);
+        if (toMin(b) <= toMin(a)) throw U.bad('En el horario comercial, el cierre tiene que ser después de la apertura (' + a + ' a ' + b + ').');
+        return [a, b];
+      })
+      .sort((x, y) => toMin(x[0]) - toMin(y[0]));
+    for (let i = 1; i < ranges.length; i++) {
+      if (toMin(ranges[i][0]) < toMin(ranges[i - 1][1])) {
+        throw U.bad('En el horario comercial, los horarios de un mismo día no se pueden pisar (' + hoursText([ranges[i - 1], ranges[i]]) + ').');
+      }
+    }
+    out[d] = ranges;
   }
   return out;
 }
@@ -311,7 +347,7 @@ function checkProductPrice(price, cost, isGift, confirmLoss) {
 }
 
 module.exports = {
-  priceSale, splitPayments, overlaps, findConflicts, findOverlaps, withinHours, checkHours, DEFAULT_HOURS, weekday,
+  priceSale, splitPayments, overlaps, findConflicts, findOverlaps, withinHours, checkHours, normHours, hoursText, DEFAULT_HOURS, weekday,
   pctChange, marginPct, breakEven, projectMonth, reachDay, lostClients, peakPhrase, peakReliable, PEAK_MIN,
   csvCell, csvDoc, normalizeBarcode, gtinValid, checkProductPrice, fmtMoney,
 };
