@@ -106,11 +106,11 @@ El código ya está en el repositorio `Sistema-PetShop`. Render lee la rama que 
 - **Inflación:** *Stock → % Actualizar precios* sube los precios de una categoría, marca o proveedor de una vez, con redondeo.
 - **Cambiar un precio en una venta:** solo el dueño, escribiendo el motivo. Queda en *Usuarios y actividad → Actividad*.
 - **Eliminar un movimiento de caja:** solo el dueño, escribiendo el motivo. Queda en *Actividad* quién lo eliminó y por qué.
-- **Configuración** (solo el dueño): datos del negocio, stock mínimo por defecto y días de aviso de vencimiento, gastos fijos del mes (los usa el punto de equilibrio del *Resumen*), formas de pago, horario de atención e informe semanal.
+- **Datos del negocio** (nombre, ticket, formas de pago, horario de atención, gastos fijos, alertas de stock): la pantalla *Configuración* se quitó; el sistema usa los valores que ya están guardados en la base (tabla `settings`) o los de fábrica.
 
 ## Informe semanal por email
 
-Se activa en *Configuración → Informe semanal* y necesita las variables `EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM` y `CRON_SECRET` en Render.
+No se usa: la pantalla para activarlo se quitó junto con *Configuración*. Sin las variables `EMAIL_PROVIDER`, `EMAIL_API_KEY` y `EMAIL_FROM` en Render no se envía nada.
 
 ## Copias de seguridad (leer con atención)
 
