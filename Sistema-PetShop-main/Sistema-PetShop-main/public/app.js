@@ -62,7 +62,7 @@ var APPT_LABEL={en_curso:'En curso'};APPT_STATUS.forEach(function(x){APPT_LABEL[
 var APPT_FORM_STATUS=[['reservado','Reservado'],['confirmado','Confirmado']];
 var APPT_VIEWS=[['day','Día'],['week','Semana'],['month','Mes']];
 var WEEKDAYS_LONG=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-// Aviso de vencimiento: productos que vencen en los próximos N días (Configuración → Alertas de stock).
+// Aviso de vencimiento: productos que vencen en los próximos N días (valor guardado en la configuración del negocio).
 var expiryDays=function(){return Number(S.settings.expiryDays)||30;};
 var PAGE=100; // filas por página en las listas largas
 
@@ -511,7 +511,7 @@ function refreshView(){
 function navItems(){
   var a=[['resumen','Resumen','Principal'],['vender','Vender','Principal'],['agenda','Agenda','Principal'],
     ['stock','Stock','Catálogo'],['servicios','Servicios','Catálogo'],['clientes','Clientes','Contactos'],['proveedores','Proveedores','Contactos']];
-  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración'],['configuracion','Configuración','Administración']);
+  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración']);
   return a;
 }
 function renderNav(){
@@ -699,7 +699,7 @@ function sumProyeccion(){
   if(!P)return '<div class="skeleton" aria-busy="true"><i></i><i></i></div>';
   var p=P.projection,b=P.breakEven,mes=parse(P.month+'-01').toLocaleDateString('es-AR',{month:'long'});
   var be=b.need==null?'<p class="empty">'+(b.margin==null?'Todavía no hay ventas con costo cargado para calcular el margen.':'Con el margen actual ('+pct(b.margin)+') no se puede calcular el punto de equilibrio.')+'</p>':
-    '<p>Gastos fijos del mes: <b>'+money(b.fixedCosts)+'</b> <small>('+(b.fixedSource==='manual'?'cargados en Configuración':'egresos de '+esc((b.fixedCategories||[]).join(', ')||'ninguna categoría marcada'))+')</small> · Margen bruto promedio: <b>'+pct(b.margin)+'</b></p>'+
+    '<p>Gastos fijos del mes: <b>'+money(b.fixedCosts)+'</b> <small>('+(b.fixedSource==='manual'?'monto mensual guardado':'egresos de '+esc((b.fixedCategories||[]).join(', ')||'ninguna categoría marcada'))+')</small> · Margen bruto promedio: <b>'+pct(b.margin)+'</b></p>'+
     '<p class="big">Necesitás vender '+money(b.need)+' para no perder</p>'+
     '<div class="meter'+(b.progress>=100?'':' warnm')+'" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(b.progress)+'"><i style="width:'+Math.max(1,b.progress)+'%"></i></div>'+
     '<p>Vendiste <b>'+money(P.sales)+'</b> de <b>'+money(b.need)+'</b> necesarios ('+pct(b.progress)+'). '+(b.progress>=100?'¡Ya cubriste los gastos fijos del mes! ':b.reachDate?'Al ritmo actual lo alcanzás el '+fmtDate(b.reachDate)+'.':'Al ritmo actual no se alcanza este mes.')+'</p>';
@@ -709,8 +709,8 @@ function sumProyeccion(){
     '<tr><td>Egresos a fin de mes</td><td class="num">'+money(p.expenses.prudent)+'</td><td class="num"><b>'+money(p.expenses.expected)+'</b></td><td class="num">'+money(p.expenses.optimistic)+'</td></tr>'+
     '<tr><td><b>Saldo de caja del mes</b></td><td class="num '+(P.result.prudent>=0?'in':'out')+'">'+money(P.result.prudent)+'</td><td class="num '+(P.result.expected>=0?'in':'out')+'"><b>'+money(P.result.expected)+'</b></td><td class="num '+(P.result.optimistic>=0?'in':'out')+'">'+money(P.result.optimistic)+'</td></tr>'+
     '</tbody></table></div><p class="note2">Hasta hoy: vendiste '+money(P.sales)+' y gastaste '+money(P.expenses)+'.</p></section>'+
-    '<section class="panel"><div class="sec-head"><h2 class="h3">Punto de equilibrio</h2><button class="btn" data-action="goto-fixed">'+(b.fixedCosts>0?'Cambiar gastos fijos':'Cargar gastos fijos')+'</button></div>'+
-    (b.fixedCosts>0?'':'<p class="warnbox">Todavía no hay gastos fijos: cargá cuánto pagás por mes (alquiler, sueldos, servicios) para saber cuánto tenés que vender para no perder.</p>')+be+'</section>';
+    '<section class="panel"><div class="sec-head"><h2 class="h3">Punto de equilibrio</h2></div>'+
+    (b.fixedCosts>0?'':'<p class="warnbox">Todavía no hay gastos fijos este mes. Anotá en Caja los egresos de alquiler y servicios, sueldos e impuestos para saber cuánto tenés que vender para no perder.</p>')+be+'</section>';
 }
 
 /* ============================================================
@@ -1512,56 +1512,6 @@ function viewBackups(){
     '<p>La copia comprimida (.json.gz) pesa mucho menos. Para comprobar que tus copias sirven, seguí la «prueba de restauración» del README una vez por mes.</p></div></div>'+
     usagePanel()+'<section class="sec"><h2 class="h3">Copias guardadas en el sistema</h2><div class="bk-list">'+rows+'</div></section></section>';
 }
-/* ============================================================
-   Configuración del negocio (solo el dueño)
-   Datos del negocio, alertas de stock, gastos fijos del punto de equilibrio, formas de pago, horario y el informe
-   semanal. Es el lugar para cualquier parámetro operativo que hoy esté fijo en el sistema.
-   ============================================================ */
-function viewConfig(){
-  var st=S.settings,hours=st.hours||{},rep=st.report||{};
-  var day=function(d){var h=hours[d];return '<div class="hrow"><span>'+WEEKDAYS_LONG[d]+'</span>'+
-    '<label class="check"><input type="checkbox" name="open_'+d+'"'+(h?' checked':'')+'> Abre</label>'+
-    '<input type="time" name="from_'+d+'" value="'+(h?h[0]:'09:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': apertura">'+
-    '<input type="time" name="to_'+d+'" value="'+(h?h[1]:'19:00')+'" aria-label="'+WEEKDAYS_LONG[d]+': cierre"></div>';};
-  var checks=function(name,all,on){return '<div class="checkgrid">'+all.map(function(x){return '<label class="check"><input type="checkbox" name="'+name+'" value="'+esc(x)+'"'+(on.indexOf(x)>=0?' checked':'')+'> '+esc(x)+'</label>';}).join('')+'</div>';};
-  return '<section class="farm"><div class="head"><h1>Configuración</h1><div class="hbtns"><button class="btn primary" data-action="config-save">Guardar cambios</button></div></div>'+
-    '<form id="cfgform" class="cfg" novalidate>'+
-    '<section class="panel" id="cfg-negocio"><h2 class="h3">Datos del negocio</h2><div class="fields">'+
-      fld('Nombre del negocio','shopName',{value:st.shopName||S.shop,req:true,maxlength:100})+fld('Teléfono','phone',{value:st.phone,maxlength:50,inputmode:'tel'})+
-      fld('Dirección','address',{value:st.address,full:true,maxlength:200})+
-      fld('Texto al pie del ticket','ticketText',{value:st.ticketText,full:true,maxlength:200})+fld('Ancho del ticket','ticketWidth',{opts:[[80,'80 mm'],[58,'58 mm']],value:st.ticketWidth||80})+'</div></section>'+
-    '<section class="panel" id="cfg-stock"><h2 class="h3">Alertas de stock</h2><div class="fields">'+
-      fld('Stock mínimo que se propone al cargar un producto','defaultMinStock',{type:'number',min:0,step:'0.001',value:st.defaultMinStock!=null?st.defaultMinStock:2,req:true,hint:'Cada producto tiene su propio mínimo (se cambia al editarlo); este es el valor de partida.'})+
-      fld('Avisar vencimientos con cuántos días de anticipación','expiryDays',{type:'number',min:1,max:365,step:'1',value:st.expiryDays||30,req:true})+'</div></section>'+
-    '<section class="panel" id="cfg-fijos"><h2 class="h3">Gastos fijos (punto de equilibrio)</h2>'+
-      '<p class="note2">El Resumen → Proyección calcula cuánto tenés que vender para cubrir los gastos fijos. Podés cargar el monto mensual o dejarlo en 0 para que se calcule con los egresos de las categorías marcadas.</p><div class="fields">'+
-      fld('Gastos fijos por mes','fixedMonthly',{type:'number',min:0,step:'0.01',value:st.fixedMonthly||0,inputmode:'decimal',hint:'Ej.: alquiler + sueldos + servicios. 0 = calcularlos con la caja.'})+
-      fld('Margen bajo (para marcar en rojo), en %','lowMargin',{type:'number',min:0,max:100,step:'0.1',value:st.lowMargin!=null?st.lowMargin:10,req:true})+
-      '<div class="fld full"><span>Categorías de egresos que son gastos fijos</span>'+checks('fixedCategories',CASH_OUT_CATS,st.fixedCategories||[])+'</div>'+
-      fld('Cliente perdido: días sin comprar','lostDays',{type:'number',min:7,max:365,step:'1',value:st.lostDays||30,req:true})+'</div></section>'+
-    '<section class="panel"><h2 class="h3">Formas de pago habilitadas</h2>'+checks('methods',ALL_PAY,st.methods||ALL_PAY)+'</section>'+
-    '<section class="panel"><h2 class="h3">Horario de atención</h2><p class="note2">La agenda avisa si un turno queda fuera de este horario.</p><div class="hours">'+[1,2,3,4,5,6,0].map(day).join('')+'</div></section>'+
-    '<section class="panel"><h2 class="h3">Informe semanal por email</h2>'+(st.emailReady?'':'<p class="warnbox">El envío de emails no está configurado en el servidor (faltan EMAIL_PROVIDER, EMAIL_API_KEY y EMAIL_FROM en Render). Podés dejarlo listo y se va a enviar cuando se configure.</p>')+
-      '<div class="fields">'+fld('Enviar el informe de la semana todos los lunes','repEnabled',{type:'checkbox',value:!!rep.enabled,full:true})+
-      fld('Hora de envío','repHour',{type:'number',min:0,max:23,step:'1',value:rep.hour!=null?rep.hour:8})+
-      fld('Destinatarios (separados por coma)','repTo',{value:rep.recipients,full:true,maxlength:500,ph:'Ej.: duena@gmail.com'})+'</div></section>'+
-    '<p class="err" role="alert" id="cfgerr"></p></form></section>';
-}
-async function saveConfig(){
-  var f=$('#cfgform'),err=$('#cfgerr');err.textContent='';
-  if(!validateForm(f)){err.textContent='Revisá los campos marcados.';throw Object.assign(new Error('Revisá los campos marcados.'),{cancelled:true});}
-  var v=function(n){var el=f.querySelector('[name="'+n+'"]');return el?el.value:'';};
-  var all=function(n){return Array.prototype.map.call(f.querySelectorAll('[name="'+n+'"]:checked'),function(x){return x.value;});};
-  var hours={};[0,1,2,3,4,5,6].forEach(function(d){hours[d]=f.querySelector('[name="open_'+d+'"]').checked?[v('from_'+d),v('to_'+d)]:null;});
-  var rep=S.settings.report||{};
-  var body={shopName:v('shopName'),address:v('address'),phone:v('phone'),ticketText:v('ticketText'),ticketWidth:Number(v('ticketWidth')),hours:hours,methods:all('methods'),
-    fixedCategories:all('fixedCategories'),fixedMonthly:v('fixedMonthly')||0,lowMargin:v('lowMargin'),lostDays:v('lostDays'),defaultMinStock:v('defaultMinStock'),expiryDays:v('expiryDays'),
-    report:{enabled:f.querySelector('[name="repEnabled"]').checked,weekday:rep.weekday!=null?rep.weekday:1,hour:Number(v('repHour')),recipients:v('repTo')}};
-  try{var r=await api('/settings',{method:'PUT',body:body});}
-  catch(e){err.textContent=e.message;throw e;}
-  S.settings=Object.assign({},S.settings,r);S.shop=r.shopName||S.shop;document.title=S.shop;$('#shopname').textContent=S.shop;
-  ui.sum.proj=null;render();toast('Configuración guardada');
-}
 function viewUsers(){
   var tabs='<div class="tabs" role="tablist"><button class="tab" role="tab" data-action="utab" data-v="users" aria-selected="'+(ui.utab==='users')+'">Usuarios</button><button class="tab" role="tab" data-action="utab" data-v="actividad" aria-selected="'+(ui.utab==='actividad')+'">Actividad</button></div>';
   if(ui.utab==='actividad')return '<section class="farm"><div class="head"><h1>Usuarios y actividad</h1></div>'+tabs+auditHTML()+'</section>';
@@ -1588,14 +1538,14 @@ function auditHTML(){
 }
 function render(){
   if(!S.user)return;
-  var adminOnly={caja:1,copias:1,usuarios:1,configuracion:1};
+  var adminOnly={caja:1,copias:1,usuarios:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='vender';
   if(ui.view!=='vender'&&stripScanner){stripScanner.stop();stripScanner=null;}
   if(ui.view==='vender'&&stripScanner&&stripScanner.box.parentNode)stripScanner.box.parentNode.removeChild(stripScanner.box);
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='resumen'?viewResumen():v==='vender'?viewVender():v==='stock'?viewStock():v==='servicios'?viewServicios():
-    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():v==='configuracion'?viewConfig():viewUsers();
+    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():viewUsers();
   labelTables();
   if(v==='vender'){mountStrip();saveDraft();if(ui.draftNote){ui.draftNote=false;toast('Recuperamos tu venta en curso.');}}
 }
@@ -2251,9 +2201,6 @@ var actions={
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm(byId(ui.users,id));},
   'change-pass':function(){passwordForm();},
-  'config-save':function(){return saveConfig();},
-  // Resumen → Proyección → Punto de equilibrio: directo a los gastos fijos de la Configuración.
-  'goto-fixed':async function(){await go('configuracion');var el=$('#cfg-fijos');if(el){el.scrollIntoView({block:'start'});var i=el.querySelector('[name="fixedMonthly"]');if(i)i.focus();}},
   // Proveedores
   'new-supplier':function(){supplierForm();},
   'edit-supplier':function(id){supplierForm(byId(ui.suppliers,id));},
