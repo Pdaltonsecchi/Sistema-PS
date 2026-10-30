@@ -194,8 +194,8 @@ module.exports = function (H) {
     }
     const s = await getSettings(c);
     if (a.petId && !['cancelado', 'no_vino'].includes(a.status) && !L.withinHours(s.hours, a.date, a.time, a.duration) && b.confirmHours !== true) {
-      const h = s.hours[L.weekday(a.date)];
-      throw new HttpError(409, (h ? 'El turno queda fuera del horario de atención de ese día (' + h[0] + ' a ' + h[1] + ').' : 'Ese día el local está cerrado.') + ' ¿Lo reservás igual?', { code: 'hours' });
+      const h = L.normHours(s.hours)[L.weekday(a.date)];
+      throw new HttpError(409, (h ? 'El turno queda fuera del horario de atención de ese día (' + L.hoursText(h) + ').' : 'Ese día el local está cerrado.') + ' ¿Lo reservás igual?', { code: 'hours' });
     }
   }
   /** Cuándo empezó y terminó de verdad un turno (para comparar con la duración estimada). */

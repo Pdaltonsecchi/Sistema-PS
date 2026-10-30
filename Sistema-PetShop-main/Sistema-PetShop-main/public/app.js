@@ -300,6 +300,16 @@ function validateForm(f){
   if(first){first.focus();first.scrollIntoView({block:'center'});}
   return !first;
 }
+/**
+ * Mensaje de un formulario que no se pudo guardar. Si fue la conexión, el servidor o la demora (no un dato mal cargado),
+ * se aclara que lo cargado sigue en pantalla y qué tocar para reintentar.
+ */
+function formErrorText(err,action){
+  var msg=(err&&err.message)||'Algo salió mal.';
+  var st=err&&err.status;
+  if(st===0||st===408||st>=500)msg+=' Lo que cargaste sigue acá: tocá «'+action+'» de nuevo'+(st===0?' cuando vuelva la conexión.':'.');
+  return msg;
+}
 /** Si el mensaje del servidor nombra un campo («Nombre»), el error también se muestra debajo de ese campo. */
 function attachServerError(f,msg){
   var m=/«([^»]+)»/.exec(msg||'');if(!m)return;
@@ -310,19 +320,19 @@ function attachServerError(f,msg){
   });
 }
 function openForm(o){
-  dlg.innerHTML='<form class="dform" novalidate><h2>'+o.title+'</h2>'+o.body+'<p class="err" role="alert"></p>'+
-    '<div class="actions"><button type="button" class="btn ghost" data-close>Cancelar</button>'+
+  dlg.innerHTML='<form class="dform" novalidate><h2>'+o.title+'</h2>'+o.body+
+    '<div class="actions"><p class="err" role="alert"></p><button type="button" class="btn ghost" data-close>Cancelar</button>'+
     '<button type="submit" class="btn '+(o.danger?'danger':'primary')+'">'+(o.submit||'Guardar')+'</button></div></form>';
   var f=dlg.querySelector('form');
   f.addEventListener('submit',async function(e){
     e.preventDefault();
     if(f.dataset.busy)return; // nunca se envía dos veces
     if(!validateForm(f)){f.querySelector('.err').textContent='Revisá los campos marcados.';return;}
-    var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={},label=btn.innerHTML;
+    var btn=f.querySelector('[type="submit"]'),errEl=f.querySelector('.err'),data={},label=btn.innerHTML,action=btn.textContent.trim();
     new FormData(f).forEach(function(v,k){data[k]=v;});
     errEl.textContent='';f.dataset.busy='1';btn.disabled=true;btn.classList.add('busy');btn.textContent='Guardando…';
     try{var r=await o.onSubmit(data,f);if(r!==false&&dlg.open&&dlg.contains(f))dlg.close();}
-    catch(err){if(!err.cancelled){errEl.textContent=err.message||'Algo salió mal. Reintentá.';attachServerError(f,err.message);}}
+    catch(err){if(!err.cancelled){errEl.textContent=formErrorText(err,action);attachServerError(f,err.message);}}
     delete f.dataset.busy;btn.disabled=false;btn.classList.remove('busy');btn.innerHTML=label;
   });
   f.addEventListener('input',function(e){var el=e.target;if(el.getAttribute&&el.getAttribute('aria-invalid')&&el.checkValidity()){el.removeAttribute('aria-invalid');var x=f.querySelector('#'+el.id+'_err');if(x)x.textContent='';}});
@@ -511,7 +521,7 @@ function refreshView(){
 function navItems(){
   var a=[['resumen','Resumen','Principal'],['vender','Vender','Principal'],['agenda','Agenda','Principal'],
     ['stock','Stock','Catálogo'],['servicios','Servicios','Catálogo'],['clientes','Clientes','Contactos'],['proveedores','Proveedores','Contactos']];
-  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración']);
+  if(isAdmin())a.push(['caja','Caja','Administración'],['copias','Copias de seguridad','Administración'],['usuarios','Usuarios y actividad','Administración'],['configuracion','Configuración','Administración']);
   return a;
 }
 function renderNav(){
@@ -1217,7 +1227,7 @@ function ingestScanner(){
         (admin?fld('Costo por '+(p.unit==='kg'?'kilo':'unidad'),'icost',{type:'number',min:0,step:'0.01',value:p.cost||''})+fld('Proveedor','isup',{opts:supplierOpts(),value:p.supplierId})+
           fld('Vencimiento (opcional)','iexp',{type:'date'})+fld('Forma de pago','imethod',{opts:PAY(),value:'Transferencia'})+fld('Registrar la compra como egreso en caja','icash',{type:'checkbox',full:true}):
           fld('Vencimiento (opcional)','iexp',{type:'date'})+fld('¿Cuánto pagaste en total? (vacío si no pagaste ahora)','ipaid',{type:'number',min:0.01,step:'0.01',inputmode:'decimal'})+fld('Forma de pago','imethod',{opts:PAY(),value:'Efectivo'}))+
-      '</div><p class="err" role="alert"></p><div class="actions"><button type="button" class="btn ghost" data-x="skip">Otro producto</button><button type="button" class="btn primary" data-x="add">Sumar al stock</button></div>';
+      '</div><div class="actions"><p class="err" role="alert"></p><button type="button" class="btn ghost" data-x="skip">Otro producto</button><button type="button" class="btn primary" data-x="add">Sumar al stock</button></div>';
     var q=card_.querySelector('#iq');q.focus();q.select();
     card_.querySelectorAll('[data-q]').forEach(function(b){b.addEventListener('click',function(){var v=Number(q.value)||0,s=Number(step);v=b.dataset.q==='+'?v+(p.unit==='kg'?1:s):v-(p.unit==='kg'?1:s);q.value=Math.max(Number(step),r3(v));});});
     q.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();card_.querySelector('[data-x="add"]').click();}});
@@ -1328,10 +1338,12 @@ function calMonthGrid(){
  */
 function calDayGrid(){
   var iso=ui.cal.anchor,list=dayAppts(iso),h=(S.settings.hours||{})[parse(iso).getDay()];
-  var open=h?toMin(h[0]):9*60,close=h?toMin(h[1]):19*60;
+  if(h&&typeof h[0]==='string')h=[h]; // formato viejo: un solo horario
+  var open=h?toMin(h[0][0]):9*60,close=h?toMin(h[h.length-1][1]):19*60;
+  var shut=function(m){return !!h&&!h.some(function(r){return m>=toMin(r[0])&&m<toMin(r[1]);});};
   list.forEach(function(a){open=Math.min(open,Math.floor(toMin(a.time)/30)*30);close=Math.max(close,Math.ceil((toMin(a.time)+a.duration)/30)*30);});
   var SLOT=30,PX=44,rows='';
-  for(var m=open;m<close;m+=SLOT)rows+='<div class="slot'+(m%60===0?' hour':'')+'" style="height:'+PX+'px"><span>'+hhmm(m)+'</span><button class="slotadd" data-action="cal-add-slot" data-v="'+hhmm(m)+'" aria-label="Nuevo turno a las '+hhmm(m)+'"></button></div>';
+  for(var m=open;m<close;m+=SLOT)rows+='<div class="slot'+(m%60===0?' hour':'')+(shut(m)?' off':'')+'" style="height:'+PX+'px"><span>'+hhmm(m)+'</span><button class="slotadd" data-action="cal-add-slot" data-v="'+hhmm(m)+'" aria-label="Nuevo turno a las '+hhmm(m)+'"></button></div>';
   // Columnas: cada turno va en la primera columna donde no se pisa con otro (los cancelados no ocupan lugar).
   var act=list.filter(active),cols=[];
   act.forEach(function(a){
@@ -1512,6 +1524,52 @@ function viewBackups(){
     '<p>La copia comprimida (.json.gz) pesa mucho menos. Para comprobar que tus copias sirven, seguí la «prueba de restauración» del README una vez por mes.</p></div></div>'+
     usagePanel()+'<section class="sec"><h2 class="h3">Copias guardadas en el sistema</h2><div class="bk-list">'+rows+'</div></section></section>';
 }
+/* ============================================================
+   Configuración (solo el dueño): nombre del negocio, horario de atención y formas de pago.
+   Cada día puede tener uno o más horarios (por ejemplo de 9 a 13 y de 16 a 19).
+   ============================================================ */
+var MAX_RANGES=4;
+function hourRangeHTML(d,r){
+  var day=WEEKDAYS_LONG[d].toLowerCase();
+  return '<div class="hrange"><input type="time" name="from_'+d+'" value="'+esc(r[0])+'" aria-label="Desde ('+day+')" required>'+
+    '<span aria-hidden="true">a</span><input type="time" name="to_'+d+'" value="'+esc(r[1])+'" aria-label="Hasta ('+day+')" required>'+
+    '<button type="button" class="link bad" data-action="cfg-del-range" aria-label="Quitar este horario del '+day+'">Quitar</button></div>';
+}
+function viewConfig(){
+  var st=S.settings,hours=st.hours||{},methods=st.methods&&st.methods.length?st.methods:ALL_PAY;
+  var day=function(d){
+    var rs=hours[d]||[];
+    if(rs.length&&typeof rs[0]==='string')rs=[rs]; // formato viejo: un solo horario
+    return '<div class="hday" data-d="'+d+'"><label class="check hopen"><input type="checkbox" name="open_'+d+'"'+(rs.length?' checked':'')+'> <b>'+WEEKDAYS_LONG[d]+'</b><span class="hclosed">Cerrado</span></label>'+
+      '<div class="hranges"'+(rs.length?'':' hidden')+'>'+rs.map(function(r){return hourRangeHTML(d,r);}).join('')+
+      '<button type="button" class="link" data-action="cfg-add-range" data-v="'+d+'">+ Agregar horario</button></div></div>';
+  };
+  return '<section class="farm"><div class="head"><h1>Configuración</h1><div class="hbtns"><button class="btn primary" data-action="config-save">Guardar cambios</button></div></div>'+
+    '<form id="cfgform" class="cfg" novalidate>'+
+    '<section class="panel"><h2 class="h3">Negocio</h2><div class="fields">'+fld('Nombre del negocio','shopName',{value:st.shopName||S.shop,req:true,maxlength:100,full:true,hint:'Aparece en el menú y en el ticket.'})+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Horario de atención</h2><p class="note2">La agenda avisa si un turno queda fuera de horario. Si cerrás al mediodía, agregá un segundo horario ese día.</p><div class="hours">'+[1,2,3,4,5,6,0].map(day).join('')+'</div></section>'+
+    '<section class="panel"><h2 class="h3">Formas de pago</h2><p class="note2">Son los botones que aparecen al cobrar.</p><div class="checkgrid">'+
+      ALL_PAY.map(function(m){return '<label class="check"><input type="checkbox" name="methods" value="'+esc(m)+'"'+(methods.indexOf(m)>=0?' checked':'')+'> '+esc(m)+'</label>';}).join('')+'</div></section>'+
+    '<p class="err" role="alert" id="cfgerr"></p></form></section>';
+}
+async function saveConfig(){
+  var f=$('#cfgform'),err=$('#cfgerr');err.textContent='';
+  var stop=function(msg){err.textContent=msg;return Object.assign(new Error(msg),{cancelled:true});};
+  if(!validateForm(f))throw stop('Revisá los campos marcados.');
+  var hours={};
+  [0,1,2,3,4,5,6].forEach(function(d){
+    var box=f.querySelector('.hday[data-d="'+d+'"]');
+    var rs=box.querySelector('[name="open_'+d+'"]').checked?Array.prototype.map.call(box.querySelectorAll('.hrange'),function(r){return [r.querySelector('[name="from_'+d+'"]').value,r.querySelector('[name="to_'+d+'"]').value];}):[];
+    hours[d]=rs.length?rs:null;
+  });
+  var methods=Array.prototype.map.call(f.querySelectorAll('[name="methods"]:checked'),function(x){return x.value;});
+  if(!methods.length){toast('Dejá habilitada al menos una forma de pago.',true);throw stop('Dejá habilitada al menos una forma de pago.');}
+  try{var r=await api('/settings',{method:'PUT',body:{shopName:f.querySelector('[name="shopName"]').value,hours:hours,methods:methods}});}
+  catch(e){err.textContent=e.message;throw e;}
+  S.settings=Object.assign({},S.settings,r);S.shop=r.shopName||S.shop;document.title=S.shop;$('#shopname').textContent=S.shop;
+  if(PAY().indexOf(ui.cart.method)<0)ui.cart.method=PAY()[0];
+  render();toast('Configuración guardada');
+}
 function viewUsers(){
   var tabs='<div class="tabs" role="tablist"><button class="tab" role="tab" data-action="utab" data-v="users" aria-selected="'+(ui.utab==='users')+'">Usuarios</button><button class="tab" role="tab" data-action="utab" data-v="actividad" aria-selected="'+(ui.utab==='actividad')+'">Actividad</button></div>';
   if(ui.utab==='actividad')return '<section class="farm"><div class="head"><h1>Usuarios y actividad</h1></div>'+tabs+auditHTML()+'</section>';
@@ -1538,14 +1596,14 @@ function auditHTML(){
 }
 function render(){
   if(!S.user)return;
-  var adminOnly={caja:1,copias:1,usuarios:1};
+  var adminOnly={caja:1,copias:1,usuarios:1,configuracion:1};
   if(adminOnly[ui.view]&&!isAdmin())ui.view='vender';
   if(ui.view!=='vender'&&stripScanner){stripScanner.stop();stripScanner=null;}
   if(ui.view==='vender'&&stripScanner&&stripScanner.box.parentNode)stripScanner.box.parentNode.removeChild(stripScanner.box);
   renderNav();renderAlerts();renderUserBox();
   var v=ui.view;
   main.innerHTML=v==='resumen'?viewResumen():v==='vender'?viewVender():v==='stock'?viewStock():v==='servicios'?viewServicios():
-    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():viewUsers();
+    v==='agenda'?viewAgenda():v==='clientes'?viewClientes():v==='proveedores'?viewProveedores():v==='caja'?viewCaja():v==='copias'?viewBackups():v==='configuracion'?viewConfig():viewUsers();
   labelTables();
   if(v==='vender'){mountStrip();saveDraft();if(ui.draftNote){ui.draftNote=false;toast('Recuperamos tu venta en curso.');}}
 }
@@ -2201,6 +2259,17 @@ var actions={
   'new-user':function(){userForm();},
   'edit-user':function(id){userForm(byId(ui.users,id));},
   'change-pass':function(){passwordForm();},
+  'config-save':function(){return saveConfig();},
+  'cfg-add-range':function(id,b){
+    var list=b.parentNode.querySelectorAll('.hrange');
+    if(list.length>=MAX_RANGES){toast('Cada día puede tener como máximo '+MAX_RANGES+' horarios.',true);return;}
+    b.insertAdjacentHTML('beforebegin',hourRangeHTML(b.dataset.v,list.length?['16:00','20:00']:['09:00','19:00']));
+    var inp=b.previousElementSibling.querySelector('input');if(inp)inp.focus();
+  },
+  'cfg-del-range':function(id,b){
+    var box=b.closest('.hday');b.closest('.hrange').remove();
+    if(!box.querySelector('.hrange')){box.querySelector('input[type="checkbox"]').checked=false;box.querySelector('.hranges').hidden=true;}
+  },
   // Proveedores
   'new-supplier':function(){supplierForm();},
   'edit-supplier':function(id){supplierForm(byId(ui.suppliers,id));},
@@ -2296,6 +2365,12 @@ document.addEventListener('input',function(e){
 });
 document.addEventListener('change',function(e){
   var t=e.target,id=t.id;
+  // Configuración: al marcar que un día abre sin horarios se propone uno; al desmarcarlo se ocultan.
+  if(t.name&&/^open_\d$/.test(t.name)&&t.closest('.hday')){
+    var hd=t.closest('.hday'),hr=hd.querySelector('.hranges');hr.hidden=!t.checked;
+    if(t.checked&&!hr.querySelector('.hrange'))hr.querySelector('[data-action="cfg-add-range"]').insertAdjacentHTML('beforebegin',hourRangeHTML(hd.dataset.d,['09:00','19:00']));
+    return;
+  }
   // Carrito: cantidades (con tope de stock), precios, descuento, cliente, mascota y pago mixto.
   if(t.classList.contains('cqty')||t.classList.contains('cprice')){
     var it=ui.cart.items[Number(t.dataset.i)];if(!it)return;
